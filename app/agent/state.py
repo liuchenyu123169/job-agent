@@ -9,5 +9,6 @@ class AgentAnalyzeState(TypedDict):
     prompt: str | None
     raw_output: str | None
     analysis: dict[str, Any] | None
+    optimization: dict[str, Any] | None
     task_id: int | None
     error_msg: str | None
