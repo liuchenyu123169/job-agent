@@ -10,6 +10,12 @@ class ResumeCreateResponse(BaseModel):
     resume_id: int
 
 
+class ResumeUploadResponse(BaseModel):
+    resume_id: int
+    file_name: str
+    content_preview: str
+
+
 class ResumeResponse(BaseModel):
     id: int
     file_name: str

@@ -5,3 +5,6 @@ pydantic-settings
 langchain-openai
 python-dotenv
 langgraph
+python-multipart
+pypdf
+python-docx
