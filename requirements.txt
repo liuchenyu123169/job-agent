@@ -2,6 +2,9 @@ fastapi
 uvicorn
 pydantic
 pydantic-settings
+chromadb
+openai
+langchain-text-splitters
 langchain-openai
 python-dotenv
 langgraph

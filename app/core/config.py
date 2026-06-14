@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ZHIPU_BASE_URL = os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
-MODEL_NAME = os.getenv("MODEL_NAME", "glm-4-flash")
+MODEL_NAME = os.getenv("LLM_MODEL") or os.getenv("MODEL_NAME", "glm-4-flash")
 
 
 def get_api_key() -> str:
