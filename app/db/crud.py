@@ -20,6 +20,15 @@ def _loads_json(value: str | None) -> dict[str, Any] | None:
     raise ValueError("Stored JSON value is not a dict")
 
 
+def _loads_json_or_raw(value: str | None) -> dict[str, Any] | str | None:
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
 def insert_resume(file_name: str, content: str) -> int:
     conn: sqlite3.Connection | None = None
     try:
@@ -187,6 +196,65 @@ def get_task_by_id(task_id: int) -> dict[str, Any] | None:
         return task
     except (sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(f"Failed to query task by id: {task_id}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_agent_tasks(
+    task_type: str | None = None,
+    resume_id: int | None = None,
+    job_id: int | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+
+        query = """
+        SELECT
+            id,
+            task_type,
+            resume_id,
+            job_id,
+            input_json,
+            output_json,
+            status,
+            error_msg,
+            created_at,
+            updated_at
+        FROM agent_task
+        WHERE 1 = 1
+        """
+        params: list[Any] = []
+
+        if task_type is not None:
+            query += " AND task_type = ?"
+            params.append(task_type)
+        if resume_id is not None:
+            query += " AND resume_id = ?"
+            params.append(resume_id)
+        if job_id is not None:
+            query += " AND job_id = ?"
+            params.append(job_id)
+
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+
+        tasks: list[dict[str, Any]] = []
+        for row in rows:
+            task = dict(row)
+            task["input_json"] = _loads_json_or_raw(task["input_json"])
+            task["output_json"] = _loads_json_or_raw(task["output_json"])
+            tasks.append(task)
+
+        return tasks
+    except sqlite3.Error as exc:
+        raise RuntimeError("Failed to list agent tasks") from exc
     finally:
         if conn is not None:
             conn.close()
