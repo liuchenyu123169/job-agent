@@ -55,7 +55,11 @@ def optimize_resume(payload: AgentOptimizeResumeRequest) -> AgentOptimizeResumeR
 
 @router.post("/generate-interview-questions", response_model=AgentGenerateInterviewQuestionsResponse)
 def generate_interview_questions(payload: AgentGenerateInterviewQuestionsRequest) -> AgentGenerateInterviewQuestionsResponse:
-    result = run_interview_questions_workflow(payload.resume_id, payload.job_id)
+    result = run_interview_questions_workflow(
+        payload.resume_id,
+        payload.job_id,
+        enable_rag=payload.enable_rag,
+    )
 
     if result["error_msg"] == "Resume not found":
         raise HTTPException(status_code=404, detail="Resume not found")

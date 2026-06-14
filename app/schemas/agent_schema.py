@@ -25,6 +25,7 @@ class AgentOptimizeResumeResponse(BaseModel):
 class AgentGenerateInterviewQuestionsRequest(BaseModel):
     resume_id: int
     job_id: int
+    enable_rag: bool = True
 
 class AgentGenerateInterviewQuestionsResponse(BaseModel):
     task_id: int

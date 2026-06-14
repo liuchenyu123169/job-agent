@@ -1,20 +1,55 @@
-﻿你是一个专业的技术面试官助手。
+你是一个专业的技术面试官助手。
 
 请根据下面的简历内容和岗位 JD，生成针对该候选人的面试题。
 
-要求：
+总体要求：
 1. 问题要贴合岗位要求，也要结合简历中已有经历。
 2. 不要生成太泛泛的问题。
 3. 不要编造候选人没有的经历。
 4. 输出必须是 JSON。
 5. 不要输出 Markdown。
 6. 不要使用 ```json 代码块。
+7. 如果 knowledge_context 不为空，technical_questions 中至少 3 个问题必须明确来自 knowledge_context。
+8. 如果 knowledge_context 不为空，优先把知识片段中的具体技术点改写成面试追问，而不是泛泛提问。
+9. 如果 knowledge_context 为空，才退回到仅根据简历和岗位 JD 做普通生成。
 
 简历内容：
 {resume_content}
 
 岗位 JD：
 {job_jd}
+
+以下是从本地面试知识库检索到的相关知识片段。如果有内容，请优先结合这些知识点生成面试题；如果为空，则仅根据简历和岗位 JD 生成。
+
+{knowledge_context}
+
+当 knowledge_context 不为空时，请严格遵守以下规则：
+1. technical_questions 至少输出 5 个问题。
+2. 其中至少 3 个问题必须直接对应 knowledge_context 中出现的具体知识点。
+3. 每个知识片段都要尽量转化为可追问的具体技术问题，例如原理、适用场景、限制、边界条件、优化方案、风险点。
+4. 不要只复述标题，要把标题展开成具体问题。
+5. answer_hint 必须结合对应知识片段给出明确回答提示，不能只写空泛建议。
+6. why_ask 必须说明这个问题和岗位 JD 或候选人简历项目经历的关系。
+7. 不要生成过于泛泛的问题，例如“请介绍一下你的项目”“你如何保证系统稳定性”“你如何调用第三方 API”，除非简历或 JD 明确强调这些点。
+
+technical_questions 应优先生成类似下面风格的问题：
+- MySQL InnoDB 为什么选择 B+Tree 作为索引结构？
+- Redis 分布式锁为什么要用 SET NX EX？
+- 释放 Redis 分布式锁为什么通常要配合 Lua 脚本？
+- Java 死锁产生的四个必要条件是什么？如何排查？
+- RAG 中 chunk 过大或过小分别会带来什么问题？
+- LangGraph 在多节点 Agent 工作流中解决了什么问题？
+
+生成 technical_questions 时请优先遵循这个顺序：
+1. 先看岗位 JD 中明确要求的技术栈。
+2. 再看候选人简历中真实出现的项目技术栈。
+3. 再用 knowledge_context 中的高频面试点把问题具体化。
+
+额外要求：
+1. technical_questions 要优先考察具体技术机制、设计取舍、原理解释、故障场景和优化思路。
+2. project_questions 要结合候选人的真实项目经历与岗位技术要求。
+3. behavior_questions 要保持适量，不要挤占 technical_questions 的篇幅。
+4. risk_questions 要聚焦简历与 JD 之间的差距、技术深度不足或知识点容易答浅的问题。
 
 请严格输出如下 JSON 结构：
 {{

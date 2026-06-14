@@ -107,6 +107,8 @@ class ChromaKnowledgeStore:
                 "content": item["content"],
                 "source": item["source"],
                 "score": item["score"],
+                "title": item["title"],
+                "section_path": item["section_path"],
             }
             for item in reranked[:top_k]
         ]

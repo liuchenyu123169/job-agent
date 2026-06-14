@@ -33,12 +33,18 @@ def parse_llm_json_output(raw_output: str) -> dict[str, Any]:
         return {"raw_output": raw_output}
 
 
-def save_success_task(task_type: str, resume_id: int, job_id: int, output_data: dict[str, Any]) -> int:
+def save_success_task(
+    task_type: str,
+    resume_id: int,
+    job_id: int,
+    output_data: dict[str, Any],
+    input_data: dict[str, Any] | None = None,
+) -> int:
     return insert_agent_task(
         task_type=task_type,
         resume_id=resume_id,
         job_id=job_id,
-        input_data={"resume_id": resume_id, "job_id": job_id},
+        input_data=input_data or {"resume_id": resume_id, "job_id": job_id},
         output_data=output_data,
         status="SUCCESS",
     )
