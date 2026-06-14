@@ -1,16 +1,11 @@
-import json
-from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.common import parse_llm_json_output, read_prompt_template, save_success_task
 from app.agent.state import AgentAnalyzeState
 from app.core.llm import invoke_llm
-from app.db.crud import get_job_by_id, get_resume_by_id, insert_agent_task
-
-ANALYZE_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "match_analyze.txt"
-OPTIMIZE_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "resume_optimize.txt"
-INTERVIEW_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "interview_questions.txt"
+from app.db.crud import get_job_by_id, get_resume_by_id
 
 
 def load_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
@@ -34,7 +29,7 @@ def build_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    prompt_template = ANALYZE_PROMPT_PATH.read_text(encoding="utf-8")
+    prompt_template = read_prompt_template("match_analyze.txt")
     prompt = prompt_template.format(
         resume_content=state["resume"]["content"],
         job_jd=state["job"]["jd_text"],
@@ -54,13 +49,8 @@ def parse_result_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    from app.api.agent_api import clean_llm_json_output
-
     raw_output = state["raw_output"] or ""
-    try:
-        analysis = json.loads(clean_llm_json_output(raw_output))
-    except json.JSONDecodeError:
-        analysis = {"raw_output": raw_output}
+    analysis = parse_llm_json_output(raw_output)
     return {"analysis": analysis}
 
 
@@ -68,13 +58,11 @@ def save_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    task_id = insert_agent_task(
+    task_id = save_success_task(
         task_type="MATCH_ANALYZE",
         resume_id=state["resume_id"],
         job_id=state["job_id"],
-        input_data={"resume_id": state["resume_id"], "job_id": state["job_id"]},
         output_data=state["analysis"],
-        status="SUCCESS",
     )
     return {"task_id": task_id}
 
@@ -83,7 +71,7 @@ def build_optimize_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    prompt_template = OPTIMIZE_PROMPT_PATH.read_text(encoding="utf-8")
+    prompt_template = read_prompt_template("resume_optimize.txt")
     prompt = prompt_template.format(
         resume_content=state["resume"]["content"],
         job_jd=state["job"]["jd_text"],
@@ -103,13 +91,8 @@ def parse_optimization_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    from app.api.agent_api import clean_llm_json_output
-
     raw_output = state["raw_output"] or ""
-    try:
-        optimization = json.loads(clean_llm_json_output(raw_output))
-    except json.JSONDecodeError:
-        optimization = {"raw_output": raw_output}
+    optimization = parse_llm_json_output(raw_output)
     return {"optimization": optimization}
 
 
@@ -117,13 +100,11 @@ def save_optimize_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    task_id = insert_agent_task(
+    task_id = save_success_task(
         task_type="RESUME_OPTIMIZE",
         resume_id=state["resume_id"],
         job_id=state["job_id"],
-        input_data={"resume_id": state["resume_id"], "job_id": state["job_id"]},
         output_data=state["optimization"],
-        status="SUCCESS",
     )
     return {"task_id": task_id}
 
@@ -131,7 +112,7 @@ def build_interview_questions_prompt_node(state: AgentAnalyzeState) -> dict[str,
     if state.get("error_msg"):
         return {}
 
-    prompt_template = INTERVIEW_PROMPT_PATH.read_text(encoding="utf-8")
+    prompt_template = read_prompt_template("interview_questions.txt")
     prompt = prompt_template.format(
         resume_content=state["resume"]["content"],
         job_jd=state["job"]["jd_text"],
@@ -147,25 +128,19 @@ def llm_generate_questions_node(state: AgentAnalyzeState) -> dict[str, Any]:
 def parse_questions_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
-    from app.api.agent_api import clean_llm_json_output
     raw_output = state["raw_output"] or ""
-    try:
-        interview_questions = json.loads(clean_llm_json_output(raw_output))
-    except json.JSONDecodeError:
-        interview_questions = {"raw_output": raw_output}
+    interview_questions = parse_llm_json_output(raw_output)
     return {"interview_questions": interview_questions}
 
-def save_questions_task_node(state : AgentAnalyzeState) -> dict[str, Any]:
+def save_questions_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    task_id = insert_agent_task(
+    task_id = save_success_task(
         task_type="INTERVIEW_QUESTIONS",
         resume_id=state["resume_id"],
         job_id=state["job_id"],
-        input_data={"resume_id": state["resume_id"], "job_id": state["job_id"]},
         output_data=state["interview_questions"],
-        status="SUCCESS",
     )
     return {"task_id": task_id}
 
