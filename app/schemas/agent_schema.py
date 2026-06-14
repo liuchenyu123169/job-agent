@@ -21,3 +21,11 @@ class AgentOptimizeResumeRequest(BaseModel):
 class AgentOptimizeResumeResponse(BaseModel):
     task_id: int
     optimization: dict[str, Any]
+
+class AgentGenerateInterviewQuestionsRequest(BaseModel):
+    resume_id: int
+    job_id: int
+
+class AgentGenerateInterviewQuestionsResponse(BaseModel):
+    task_id: int
+    questions: dict

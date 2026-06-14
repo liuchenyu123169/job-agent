@@ -10,5 +10,6 @@ class AgentAnalyzeState(TypedDict):
     raw_output: str | None
     analysis: dict[str, Any] | None
     optimization: dict[str, Any] | None
+    interview_questions: dict[str, Any] | None
     task_id: int | None
     error_msg: str | None
