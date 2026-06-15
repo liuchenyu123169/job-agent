@@ -495,3 +495,149 @@ def list_agent_tasks(
     finally:
         if conn is not None:
             conn.close()
+
+
+# ── Copilot Session CRUD ──
+
+def create_copilot_session(
+    goal: str,
+    user_id: int = DEFAULT_USER_ID,
+) -> dict[str, Any]:
+    """创建 Copilot 会话记录。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO copilot_session (user_id, goal, status)
+            VALUES (?, ?, 'RUNNING')
+            """,
+            (user_id, goal),
+        )
+        conn.commit()
+        session_id = int(cursor.lastrowid)
+        return get_copilot_session(session_id, user_id=user_id) or {}
+    except sqlite3.Error as exc:
+        if conn is not None:
+            conn.rollback()
+        raise RuntimeError("Failed to create copilot session") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_copilot_session(
+    session_id: int,
+    user_id: int = DEFAULT_USER_ID,
+) -> dict[str, Any] | None:
+    """查询单个 Copilot 会话。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, user_id, goal, status, context_json, task_ids_json, summary_json,
+                   created_at, updated_at
+            FROM copilot_session
+            WHERE id = ? AND user_id = ?
+            """,
+            (session_id, user_id),
+        )
+        session = _row_to_dict(cursor.fetchone())
+        if session is None:
+            return None
+        session["context_json"] = _loads_json_or_raw(session["context_json"])
+        session["task_ids_json"] = _loads_json_or_raw(session["task_ids_json"])
+        session["summary_json"] = _loads_json_or_raw(session["summary_json"])
+        return session
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Failed to query copilot session: {session_id}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_copilot_session(
+    session_id: int,
+    status: str | None = None,
+    context_json: dict | None = None,
+    task_ids_json: list | None = None,
+    summary_json: dict | None = None,
+    user_id: int = DEFAULT_USER_ID,
+) -> dict[str, Any] | None:
+    """更新 Copilot 会话状态和结果。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+
+        set_clauses: list[str] = []
+        params: list[Any] = []
+
+        if status is not None:
+            set_clauses.append("status = ?")
+            params.append(status)
+        if context_json is not None:
+            set_clauses.append("context_json = ?")
+            params.append(json.dumps(context_json, ensure_ascii=False))
+        if task_ids_json is not None:
+            set_clauses.append("task_ids_json = ?")
+            params.append(json.dumps(task_ids_json, ensure_ascii=False))
+        if summary_json is not None:
+            set_clauses.append("summary_json = ?")
+            params.append(json.dumps(summary_json, ensure_ascii=False))
+
+        if not set_clauses:
+            return get_copilot_session(session_id, user_id=user_id)
+
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+        params.extend([session_id, user_id])
+
+        query = f"UPDATE copilot_session SET {', '.join(set_clauses)} WHERE id = ? AND user_id = ?"
+        cursor.execute(query, tuple(params))
+        conn.commit()
+        return get_copilot_session(session_id, user_id=user_id)
+    except sqlite3.Error as exc:
+        if conn is not None:
+            conn.rollback()
+        raise RuntimeError(f"Failed to update copilot session: {session_id}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_copilot_sessions(
+    user_id: int = DEFAULT_USER_ID,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """列出用户的 Copilot 会话历史。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, user_id, goal, status, context_json, task_ids_json, summary_json,
+                   created_at, updated_at
+            FROM copilot_session
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        sessions: list[dict[str, Any]] = []
+        for row in cursor.fetchall():
+            session = dict(row)
+            session["context_json"] = _loads_json_or_raw(session["context_json"])
+            session["task_ids_json"] = _loads_json_or_raw(session["task_ids_json"])
+            session["summary_json"] = _loads_json_or_raw(session["summary_json"])
+            sessions.append(session)
+        return sessions
+    except sqlite3.Error as exc:
+        raise RuntimeError("Failed to list copilot sessions") from exc
+    finally:
+        if conn is not None:
+            conn.close()

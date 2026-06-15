@@ -172,6 +172,23 @@ def init_db() -> None:
         )
 
         cursor.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS copilot_session (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
+                goal TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'RUNNING',
+                context_json TEXT,
+                task_ids_json TEXT,
+                summary_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES user (id)
+            )
+            """
+        )
+
+        cursor.execute(
             """
             INSERT OR IGNORE INTO user (id, username, updated_at)
             VALUES (?, ?, CURRENT_TIMESTAMP)
