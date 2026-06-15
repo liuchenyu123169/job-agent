@@ -71,6 +71,10 @@ class CopilotRunRequest(BaseModel):
     goal: str = Field(..., min_length=1, description="用户的目标描述，如'帮我全面备战字节跳动后端岗'")
     resume_id: int | None = Field(default=None, description="简历 ID，如果知道的话")
     job_id: int | None = Field(default=None, description="岗位 ID，如果知道的话")
+    tools: list[str] | None = Field(
+        default=None,
+        description="指定要执行的工具列表，如 ['match_analyze', 'optimize_resume']。不传默认全跑。",
+    )
 
 
 class CopilotStepResult(BaseModel):

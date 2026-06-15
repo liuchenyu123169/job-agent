@@ -178,3 +178,115 @@ export const taskApi = {
     return safeGet(`/api/task/${taskId}`, undefined, "getTask");
   }
 };
+
+// ── Copilot SSE 流式调用 ──
+
+export function streamCopilot(payload, callbacks) {
+  const token = localStorage.getItem("token");
+  if (!token) {
+    callbacks.onError?.("未登录");
+    return () => {};
+  }
+
+  const controller = new AbortController();
+
+  fetch("http://127.0.0.1:8000/api/copilot/run", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const text = await response.text();
+        callbacks.onError?.(text || `HTTP ${response.status}`);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          // 流结束，flush 缓冲区残留数据
+          if (buffer.trim()) {
+            const lines = buffer.split("\n");
+            let currentEvent = "";
+            for (const line of lines) {
+              if (line.startsWith("event: ")) currentEvent = line.slice(7).trim();
+              else if (line.startsWith("data: ")) {
+                try { _dispatchCopilotEvent(currentEvent, JSON.parse(line.slice(6)), callbacks); } catch {}
+                currentEvent = "";
+              }
+            }
+          }
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        let currentEvent = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              _dispatchCopilotEvent(currentEvent, data, callbacks);
+            } catch {
+              // 跳过无法解析的 JSON
+            }
+            currentEvent = "";
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") {
+        callbacks.onError?.(err.message || "网络错误");
+      }
+    });
+
+  return () => controller.abort();
+}
+
+function _dispatchCopilotEvent(event, data, callbacks) {
+  switch (event) {
+    case "plan":
+      callbacks.onPlan?.(data);
+      break;
+    case "step_start":
+      callbacks.onStepStart?.(data);
+      break;
+    case "step_complete":
+      callbacks.onStepComplete?.(data);
+      break;
+    case "error":
+      callbacks.onStepError?.(data);
+      break;
+    case "final":
+      callbacks.onFinal?.(data);
+      break;
+    default:
+      break;
+  }
+}
+
+export const copilotApi = {
+  streamRun(payload, callbacks) {
+    return streamCopilot(payload, callbacks);
+  },
+  listSessions(limit = 20) {
+    return safeGet("/api/copilot/sessions", { params: { limit } }, "listSessions");
+  },
+  getSession(sessionId) {
+    return safeGet(`/api/copilot/sessions/${sessionId}`, undefined, "getSession");
+  },
+};

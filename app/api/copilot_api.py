@@ -30,10 +30,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/copilot", tags=["Copilot"])
 
-# 直通模式下按此顺序执行工具
-_FAST_PATH_TOOLS = ["match_analyze", "optimize_resume", "generate_interview_questions"]
-
-
 @router.post("/run")
 async def copilot_run(
     payload: CopilotRunRequest,
@@ -44,13 +40,16 @@ async def copilot_run(
     context = PipelineContext(resume_id=payload.resume_id, job_id=payload.job_id)
     use_fast = payload.resume_id is not None and payload.job_id is not None
 
+    # 直通模式工具列表：优先用请求传入的，否则默认三步全跑
+    fast_tools = payload.tools or ["match_analyze", "optimize_resume", "generate_interview_questions"]
+
     # 创建会话记录
     session = create_copilot_session(goal=payload.goal, user_id=user_id)
     session_id = int(session["id"])
 
-    logger.info("[Copilot] mode=%s resume_id=%s job_id=%s", "fast" if use_fast else "react", payload.resume_id, payload.job_id)
+    logger.info("[Copilot] mode=%s resume_id=%s job_id=%s tools=%s", "fast" if use_fast else "react", payload.resume_id, payload.job_id, fast_tools)
 
-    generator = _fast_generator(context, user_id, session_id) if use_fast else _react_generator(context, user_id, session_id, payload.goal)
+    generator = _fast_generator(context, user_id, session_id, fast_tools) if use_fast else _react_generator(context, user_id, session_id, payload.goal)
 
     return StreamingResponse(
         generator,
@@ -66,14 +65,40 @@ async def copilot_run(
 
 # ── 直通模式：跳过 LLM Planner，直接执行三步流水线 ──
 
+
+# ── 动态摘要生成 ──
+
+def _build_summary(context) -> str:
+    """从 PipelineContext 提取关键信息拼出可读的摘要。"""
+    parts = []
+    for tool_name, data in context.tool_results.items():
+        if tool_name == "match_analyze":
+            score = (data.get("analysis") or {}).get("match_score")
+            if score is not None:
+                parts.append(f"匹配度 {score} 分")
+        elif tool_name == "optimize_resume":
+            opt = data.get("optimization") or {}
+            summary = opt.get("summary")
+            if summary:
+                parts.append(f"简历优化：{str(summary)[:80]}")
+        elif tool_name == "generate_interview_questions":
+            qs = data.get("questions") or {}
+            tech = len(qs.get("technical_questions") or [])
+            proj = len(qs.get("project_questions") or [])
+            total = tech + proj + len(qs.get("behavior_questions") or []) + len(qs.get("risk_questions") or [])
+            if total:
+                parts.append(f"面试题 {total} 道（技术{tech}/项目{proj}）")
+    return " | ".join(parts) if parts else "执行完毕"
+
 async def _fast_generator(
     context: PipelineContext,
     user_id: int,
     session_id: int,
+    tools: list[str],
 ) -> AsyncGenerator[str, None]:
-    """直通模式 SSE 生成器：匹配分析 → 简历优化 → 面试题生成。"""
+    """直通模式 SSE 生成器：按传入的工具列表顺序执行。"""
     try:
-        for tool_name in _FAST_PATH_TOOLS:
+        for tool_name in tools:
             tool = tool_registry.get(tool_name)
             if tool is None:
                 continue
@@ -90,7 +115,8 @@ async def _fast_generator(
             else:
                 yield error_event(tool_name, result.error or "unknown error")
 
-        report = summarize_result(context, final_message="full pipeline completed")
+        dynamic_summary = _build_summary(context)
+        report = summarize_result(context, final_message=dynamic_summary)
         yield final_event(summary=report["summary"], task_ids=report["task_ids"])
 
         update_copilot_session(
