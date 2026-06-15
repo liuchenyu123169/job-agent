@@ -1,203 +1,611 @@
-# JobAgent AI求职助手系统
-## 📖 项目简介
-JobAgent 是一套面向计算机专业应届生、实习生打造的**工程级AI求职分析后端系统**，基于 FastAPI + LangGraph 实现完整Agent工作流。
-用户可上传简历文件、录入招聘岗位JD，系统依托兼容OpenAI协议的大模型自动完成简历-岗位匹配打分、简历针对性优化、岗位面试题生成，并全链路持久化存储每一次AI分析任务，支持历史任务追溯、结果复盘。
+# JobAgent - AI 求职 Copilot 系统
 
-本项目区别于简单调用LLM接口的Demo，通过状态图拆分业务节点、统一异常短路路由、抽离公共工具逻辑，具备清晰分层架构与可扩展能力，是一套可迭代升级为多用户求职平台的MVP产品。
+JobAgent 是一个面向求职场景的 AI Copilot 系统，旨在帮助用户完成从简历管理、岗位分析、简历优化、面试准备到岗位推荐的完整求职流程。系统不是简单调用大模型生成文本，而是将简历解析、岗位管理、匹配分析、RAG 知识检索、面试题生成、岗位推荐等能力封装为标准化 Tool，并通过 LangGraph Agent 进行智能编排，实现面向求职任务的自动化执行。
 
-## 🎯 项目背景
-在校学生、应届生求职时普遍存在三大痛点：
-1. **匹配判断低效**：人工逐条对比简历与岗位JD耗时久，无法精准定位自身技能与岗位需求的差距；
-2. **简历优化无方向**：不清楚当前简历短板，优化内容缺少岗位针对性，投递通过率低；
-3. **面试准备盲目**：无法快速生成贴合自身经历、目标岗位的面试题库，刷题范围宽泛。
+## 一、项目定位
 
-基于以上需求，搭建本AI求职助手系统，自动完成简历/岗位数据管理、大模型智能分析、任务日志留存，一站式解决求职匹配、简历打磨、面试备考核心诉求。
+JobAgent 的目标是从传统的“AI 功能集合”升级为“AI 求职 Copilot”。
 
-## ✨ 核心功能总览
-### 一、当前MVP已完整落地功能（v1.0 稳定版本）
-#### 1. 简历文件管理模块
-- 多格式简历文件上传解析：支持 `.txt` / `.docx(Word)` / `.pdf` 简历文件，后端自动读取并提取纯文本内容；
-- 简历数据持久化：文件名称、简历原文、解析结构化数据统一存入`resume`数据表，分配唯一`resume_id`；
-- 简历基础CRUD接口：根据ID查询、获取全部简历列表，供前端快速复用简历发起AI分析。
+传统模式下，用户需要手动点击多个功能入口，例如先上传简历，再保存岗位，再点击匹配分析、简历优化、面试题生成等按钮。而 Copilot 模式下，用户只需要用自然语言表达目标，例如：
 
-#### 2. 招聘岗位JD管理模块
-- 岗位信息录入：支持录入企业名称、岗位名称、完整JD岗位职责与要求文本；
-- 岗位数据存储：所有岗位信息存入`job`数据表，分配唯一`job_id`；
-- 岗位查询接口：单条ID查询、全量岗位列表查询，支持与简历自由组合发起AI匹配分析。
-
-#### 3. LangGraph AI Agent 工作流核心
-基于LangGraph状态图拆分线性业务为独立可复用节点，内置全局错误短路路由：
-1. 数据加载节点：读取简历、读取岗位；数据不存在直接终止流程，节省LLM调用成本；
-2. Prompt构建节点：读取项目独立维护的Prompt模板文件，动态填充简历、JD业务数据；
-3. LLM调用节点：统一封装智谱/OpenAI兼容大模型调用逻辑，环境变量一键切换模型；
-4. 输出解析节点：清洗大模型返回文本、容错处理非标准JSON输出，避免流程崩溃；
-5. 任务持久化节点：流程无异常时自动写入完整任务记录。
-
-#### 4. 三大AI智能分析能力
-1. **简历-岗位匹配度分析**
-    自动对比简历技能、项目经历与岗位JD要求，输出结构化结果：匹配总分、核心优势、技能短板、投递改进建议；
-2. **简历针对性优化建议**
-    结合目标岗位技术栈，给出简历段落改写、项目描述润色、技能补充、关键词填充优化方案；
-3. **岗位专属面试题自动生成**
-    基于简历过往技术栈+岗位要求，生成贴合投递场景的技术面试题，覆盖基础、进阶、项目实战三类题型。
-
-#### 5. AI任务全链路日志管理
-- 每一次AI分析自动生成独立任务记录，存入`agent_task`数据表；
-- 存储字段包含：任务类型、关联简历ID、关联岗位ID、完整入参、LLM原始输出、结构化解析结果、执行状态、创建时间；
-- 多条件任务查询接口：支持按任务类型、简历ID、岗位ID筛选历史分析记录，随时复盘过往AI输出结果。
-
-#### 6. 配套工程化与演示能力
-- 标准FastAPI体系：Pydantic全局参数校验、分层路由、统一异常处理；
-- 自动接口文档：内置Swagger/OpenAPI交互式接口文档，可在线调试所有后端接口；
-- 前端演示页面：配套简易前端页面，可视化完成简历上传、岗位录入、AI分析发起、结果渲染，完整演示产品主流程；
-- 环境配置隔离：通过`.env`文件统一管理大模型密钥、接口地址、模型名称，区分开发环境与线上环境。
-
-### 二、中长期迭代规划功能（v2.0 工程化增强 / v3.0 产品化增强）
-#### 1. AI能力增强线（RAG知识库，解决LLM输出泛化问题）
-- 搭建**面试知识库RAG模块**：入库Java、MySQL、Redis、FastAPI、LangChain、Agent等后端高频面试知识点；
-- 重构面试题生成工作流：新增关键词抽取、向量检索节点，检索知识库片段后联合简历+JD输入大模型，生成更专业、贴合岗位的面试题目；
-- RAG能力复用至匹配分析、简历优化两大流程，提升AI输出专业性与准确性；
-- 新增效果评测模块，量化对比RAG增强前后的分析结果质量。
-
-#### 2. 工程化&产品化增强线（从单人Demo升级多用户系统）
-- 多用户账号体系：注册、登录、身份鉴权，实现用户数据完全隔离；
-- 个性化岗位推荐：基于用户简历技能标签，匹配库内适配岗位并做智能推荐；
-- 异步任务调度：耗时AI分析任务后台异步执行，前端轮询/SSE流式获取实时结果；
-- 系统稳定性增强：接口限流、全局Trace日志、并发请求控制、大模型调用失败重试机制；
-- 部署能力优化：Docker容器化一键部署、日志持久化、线上环境配置方案。
-
-#### 3. 最终体验优化线
-- SSE流式输出：AI分析结果逐字实时推送，提升前端交互体验；
-- 简历结构化解析升级：抽取技能、项目、学历、工作年限结构化JSON存入数据库；
-- 前端完整重构：完善用户中心、简历库、岗位库、历史任务管理页面，实现完整产品交互闭环。
-
-## 🛠️ 技术栈明细
-### 后端核心
-- 开发语言：Python 3.11+
-- Web框架：FastAPI（高性能异步接口、自动交互式文档）
-- 数据校验：Pydantic v2（请求/响应模型、TypedDict字典类型约束）
-- Agent编排：LangGraph + LangChain（状态图工作流、节点拆分、条件分支路由）
-- 大模型兼容：OpenAI标准协议，支持智谱GLM、GPT系列等主流模型
-- 文件解析：python-docx（Word）、PyPDF2（PDF）、原生文本处理
-
-### 数据存储
-- 数据库：SQLite（轻量化单机存储，无需额外安装数据库服务）
-- 数据表设计：`resume`简历表、`job`岗位表、`agent_task`AI任务记录表
-
-### 工程配套工具
-- 环境管理：python-dotenv（.env环境变量配置隔离）
-- 服务启动：uvicorn ASGI异步服务
-- 依赖管理：pip + requirements.txt（环境一键复刻）
-- 版本控制：Git + GitHub（规范提交、多版本迭代管理）
-
-## 🧩 系统核心业务流程
-### 流程 1：简历文件上传存储完整流程
-1. 前端页面上传本地简历文件（TXT/DOCX/PDF），发起文件上传 POST 请求；
-2. FastAPI 后端接收文件二进制流，识别文件后缀区分简历类型；
-3. 调用文件解析工具，读取文件并提取纯文本简历内容；
-4. 使用 Pydantic 校验文件名称、解析后的简历文本是否合法；
-5. 校验通过后执行数据库插入逻辑，将文件名称、简历文本写入 resume 数据表，生成唯一的 resume_id；
-6. 后端将 resume_id 返回给前端，该 ID 可复用，直接用于发起各类 AI 分析任务。
-
-### 流程 2：岗位 JD 录入存储完整流程
-1. 前端页面填写企业名称、岗位标题、完整 JD 描述文本，提交表单；
-2. FastAPI 接收岗位录入请求，通过 Pydantic 完成所有入参完整性、格式校验；
-3. 校验无异常后，执行数据库插入逻辑，将岗位全量信息写入 job 数据表，生成唯一 job_id；
-4. 后端返回 job_id，可与任意已存储简历的 resume_id 组合，发起 AI 匹配、简历优化、面试题生成任务。
-
-### 流程 3：LangGraph AI 岗位匹配分析完整工作流
-1. 流程起点：接收前端传入的 resume_id、job_id，初始化全局状态 State；
-2. 执行加载简历节点：根据 resume_id 查询简历数据，若查询结果为空，则在全局状态写入 error_msg 标记，直接跳转至流程终止；若查询成功，将简历数据存入全局状态，进入下一节点；
-3. 执行加载岗位节点：先判断全局状态是否存在 error_msg，若存在则直接跳过本节点；无错误则根据 job_id 查询岗位 JD，岗位不存在则写入 error_msg 并终止流程，岗位正常则将 JD 数据存入全局状态；
-4. 执行 Prompt 构建节点：判断全局无错误后，读取项目 prompts 目录下的匹配分析模板文件，使用简历、JD 内容填充模板占位符，拼接完整 Prompt 并存入状态；
-5. 执行 LLM 调用节点：读取拼接完成的 Prompt，调用统一封装的大模型函数，获取模型原始文本输出，存入全局状态；
-6. 执行结果解析节点：清洗模型输出文本，捕获 JSON 解析异常，解析成功则将结构化字典存入状态，解析失败则封装原始文本兜底存储；
-7. 执行任务入库节点：无 error_msg 时，将本次任务类型、简历 ID、岗位 ID、原始入参、AI 解析结果全量插入 agent_task 任务表，生成唯一 task_id 存入状态；
-8. 流程终止：整理全局状态内 task_id、analysis 分析结果、error_msg 错误信息，统一返回给前端页面展示。
-
-## 📂 项目目录结构
-```
-job-agent/
-├── app/
-│   ├── main.py                # 项目入口，FastAPI应用初始化、路由汇总
-│   ├── api/                   # 分层接口路由
-│   │   ├── resume_api.py      # 简历文件上传、查询接口
-│   │   ├── job_api.py         # 岗位录入、查询接口
-│   │   └── agent_api.py       # AI分析、任务查询核心接口
-│   ├── agent/                 # LangGraph工作流定义
-│   │   ├── state.py           # 全局状态TypedDict定义
-│   │   └── match_workflow.py  # 匹配/优化/面试题三大工作流
-│   ├── core/                  # 全局核心配置
-│   │   ├── config.py          # 环境变量、大模型密钥读取
-│   │   └── llm.py             # LLM统一调用封装函数
-│   ├── db/                    # 数据库CRUD操作
-│   │   ├── base.py            # SQLite数据库连接封装
-│   │   └── crud.py            # 简历/岗位/任务增删查改函数
-│   ├── schemas/               # Pydantic请求、响应模型
-│   │   ├── resume_schema.py
-│   │   ├── job_schema.py
-│   │   └── agent_schema.py
-│   ├── utils/                 # 通用工具类
-│   │   ├── resume_parser.py   # PDF/Word/TXT文件解析工具
-│   │   └── llm_clean.py       # LLM输出文本清洗、JSON容错工具
-│   └── prompts/               # 独立维护大模型Prompt模板文件
-│       ├── match_analyze.txt
-│       ├── resume_optimize.txt
-│       └── interview_question.txt
-├── static/                    # 前端演示静态页面资源
-├── .env.example               # 环境变量模板（不含真实密钥，提交至Git）
-├── .gitignore                 # Git忽略配置（数据库文件、.env、虚拟环境）
-├── requirements.txt           # 项目全部依赖清单
-└── README.md                  # 项目说明文档
+```text
+帮我全面准备这个后端开发岗位的面试
 ```
 
-## 🚀 本地快速启动指南
-### 1. 环境准备
-1. 克隆项目至本地
-2. 创建Python虚拟环境并激活
-```powershell
-# 创建虚拟环境
-python -m venv .venv
-# Windows PowerShell激活环境
-.\.venv\Scripts\Activate.ps1
-```
-3. 批量安装所有依赖包
-```powershell
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
+系统会自动识别用户意图，并根据当前简历、目标岗位和知识库内容，自动调用多个工具完成完整任务链路。
 
-### 2. 环境变量配置
-复制`.env.example`，重命名为`.env`，填入大模型配置信息
-```env
-# 大模型基础配置
-OPENAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
-MODEL_NAME=glm-4-flash
-ZHIPU_API_KEY=你的智谱GLM密钥
+核心能力包括：
+
+```text
+用户注册登录
+用户数据隔离
+简历上传解析
+岗位 JD 管理
+岗位匹配分析
+简历优化建议
+RAG 增强面试题生成
+岗位推荐
+任务记录
+LangGraph Tool 调用
+SSE 流式执行进度
+Copilot 会话管理
 ```
 
-### 3. 启动后端服务
-```powershell
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+## 二、核心功能
+
+### 1. 用户体系与数据隔离
+
+系统支持用户注册、登录和 JWT 鉴权。每个用户只能访问自己的简历、岗位、AI 任务记录和推荐结果。
+
+数据隔离字段包括：
+
+```text
+resume.user_id
+job.user_id
+agent_task.user_id
 ```
-- 交互式接口文档地址：`http://127.0.0.1:8000/docs`
-- 前端演示页面地址：`http://127.0.0.1:8000/static/index.html`
 
-### 4. 基础使用流程
-1. 打开前端页面，上传简历文件，系统自动解析保存，生成`resume_id`；
-2. 录入目标招聘岗位信息，保存后生成`job_id`；
-3. 填入两个ID，分别发起「匹配分析」「简历优化」「面试题生成」三类AI任务；
-4. 页面渲染大模型返回结构化结果，同时后端自动留存本次任务记录；
-5. 可通过任务查询接口，按简历/岗位ID筛选历史分析记录，随时复盘。
+同时系统支持用户内编号：
 
-## ⚠️ 项目开发规范与Git提交约束
-1. 密钥隔离：真实密钥仅存于本地`.env`，`.env`加入`.gitignore`，仅提交无敏感信息的`.env.example`；
-2. 数据库文件：SQLite本地库文件不提交至版本仓库；
-3. 依赖同步：新增第三方包后，执行`pip freeze > requirements.txt`更新依赖清单；
-4. 提交注释规范：采用标准化英文工单注释，示例：
-    - `feat: add word resume file parse logic` 新增Word简历解析功能
-    - `refactor agent workflow common logic` 重构Agent工作流公共通用逻辑
-    - `fix: json decode error handle for llm output` 修复大模型输出JSON解析异常
-5. 代码分层约束：业务逻辑拆分至对应模块，禁止接口函数内堆砌完整业务代码，统一通过LangGraph工作流调度。
+```text
+resume.local_resume_id
+job.local_job_id
+```
 
-## 📄 开源说明
-本项目为个人学习、求职演示用途开源，可自由学习、二次迭代；大模型接口调用需自行申请对应厂商API密钥，商用使用请遵循对应大模型厂商服务协议。
+数据库内部仍使用全局唯一 ID，前端展示时使用用户视角下从 1 开始的本地编号，提升使用体验。
+
+### 2. 简历上传与解析
+
+用户可以上传个人简历，系统会解析简历文本内容，并保存到数据库中，作为后续岗位匹配、简历优化和面试题生成的基础数据。
+
+### 3. 岗位 JD 管理
+
+用户可以保存目标岗位 JD，系统会记录岗位名称、公司、岗位描述、技能要求等信息。后续所有分析任务都围绕简历和岗位 JD 展开。
+
+### 4. 岗位匹配分析
+
+系统基于用户简历和岗位 JD，调用大模型分析匹配度，输出内容包括：
+
+```text
+匹配分数
+匹配优势
+能力短板
+技能差距
+优化建议
+```
+
+该功能可以帮助用户判断当前岗位是否适合自己，以及后续应该重点补充哪些能力。
+
+### 5. 简历优化建议
+
+系统会结合目标岗位要求，对用户简历提出针对性优化建议，包括项目描述、技能关键词、表达方式和岗位匹配度提升方向。
+
+### 6. RAG 面试知识库
+
+系统内置 RAG 知识库模块，支持构建和检索面试相关知识内容。知识库内容覆盖：
+
+```text
+Java
+MySQL
+Redis
+Agent
+RAG
+LangGraph
+```
+
+RAG 链路包括：
+
+```text
+本地知识文档
+→ 文档清洗
+→ 结构化切分
+→ Embedding 向量化
+→ Chroma 持久化
+→ 多路检索
+→ 知识片段召回
+```
+
+RAG 的主要作用是让面试题生成不只依赖简历和 JD，而是结合后端八股、数据库、缓存、AI Agent 等知识库内容，生成更具体、更贴近面试场景的问题。
+
+### 7. RAG 增强面试题生成
+
+系统支持开启或关闭 RAG：
+
+```text
+enable_rag = false：简历 + JD + Prompt + LLM
+enable_rag = true ：简历 + JD + RAG 知识片段 + Prompt + LLM
+```
+
+开启 RAG 后，系统可以生成更具体的技术追问，例如：
+
+```text
+MySQL InnoDB 为什么选择 B+Tree 作为索引结构？
+Redis 如何实现分布式锁？有哪些缺点？
+LangGraph 中多节点 Agent 工作流如何实现？
+```
+
+### 8. 岗位推荐
+
+系统支持根据用户的一份简历，对用户保存过的多个岗位逐个进行匹配分析，并按照匹配分数排序，返回 TopK 推荐岗位。
+
+该功能将系统从“分析单个岗位”升级为“从岗位库中推荐最适合用户的岗位”。
+
+### 9. AI Copilot 工具调用
+
+系统后续会将已有能力封装为标准化 Tool，例如：
+
+```text
+match_analyze
+optimize_resume
+generate_interview_questions
+recommend_jobs
+search_knowledge
+list_resumes
+list_jobs
+get_task
+```
+
+每个 Tool 统一包含：
+
+```text
+name
+description
+parameters
+async execute()
+```
+
+Tool 会注册到 ToolRegistry 中，供 LangGraph Agent 动态调用。
+
+### 10. LangGraph ReAct Agent 编排
+
+Copilot 的核心编排层使用 LangGraph 实现。系统会通过 ReAct Agent 进行工具调用决策：
+
+```text
+用户目标
+→ LLM Planner 判断需要调用哪些工具
+→ ToolNode 执行工具
+→ 工具结果返回给 Agent
+→ Agent 判断是否继续调用工具
+→ 输出最终总结
+```
+
+示例任务：
+
+```text
+帮我全面备战某个后端开发岗位
+```
+
+系统可能自动执行：
+
+```text
+读取简历
+→ 读取岗位
+→ 匹配分析
+→ 简历优化
+→ RAG 检索
+→ 面试题生成
+→ 保存任务
+→ 输出最终准备报告
+```
+
+### 11. SSE 流式 Copilot API
+
+为了提升用户体验，系统计划使用 SSE 实现流式任务进度推送。用户执行 Copilot 任务时，前端可以实时展示：
+
+```text
+正在分析简历与岗位匹配度...
+正在检索 RAG 知识库...
+正在生成面试题...
+正在生成最终总结...
+任务完成
+```
+
+后端事件类型包括：
+
+```text
+plan
+step_start
+step_complete
+step_error
+final
+```
+
+### 12. Copilot 会话管理
+
+系统计划引入 Copilot Session，用于保存用户的一次完整 Copilot 执行上下文，包括：
+
+```text
+用户目标
+执行状态
+上下文数据
+工具调用记录
+关联任务 ID
+创建时间
+更新时间
+```
+
+后续可以支持会话恢复、历史查询和多轮上下文延续。
+
+## 三、技术栈
+
+### 后端
+
+```text
+Python
+FastAPI
+LangGraph
+LangChain
+JWT
+SQLite / 可扩展至 MySQL、PostgreSQL
+Chroma
+Pydantic
+```
+
+### AI 能力
+
+```text
+GLM 大模型
+Embedding 模型
+RAG 检索
+Function Calling / Tool Calling
+LangGraph ToolNode
+ReAct Agent
+```
+
+### 前端
+
+```text
+Vue
+Vite
+Dashboard 页面
+任务结果展示
+Copilot 对话入口
+SSE 流式进度展示
+```
+
+### 工程能力
+
+```text
+模块化目录结构
+用户数据隔离
+工具注册中心
+异步 Tool 执行
+任务记录
+接口鉴权
+异常处理
+日志记录
+```
+
+## 四、系统架构
+
+整体架构分为五层：
+
+```text
+前端 Dashboard / Copilot 页面
+        ↓
+Copilot API / SSE 流式接口
+        ↓
+LangGraph Agent / Pipeline 编排层
+        ↓
+Tool Registry / 标准化工具层
+        ↓
+现有业务能力：简历、岗位、RAG、LLM、任务记录、数据库
+```
+
+目标架构：
+
+```text
+用户自然语言目标
+        ↓
+Copilot API
+        ↓
+LangGraph ReAct Agent
+        ↓
+ToolNode 调用工具
+        ↓
+匹配分析 / 简历优化 / RAG 检索 / 面试题生成 / 岗位推荐
+        ↓
+SSE 推送执行进度
+        ↓
+最终求职准备报告
+```
+
+## 五、目录规划
+
+```text
+app/
+  api/
+    auth_api.py
+    resume_api.py
+    job_api.py
+    agent_api.py
+    knowledge_api.py
+    copilot_api.py
+    stream_utils.py
+
+  core/
+    config.py
+    llm.py
+    security.py
+
+  db/
+    database.py
+    crud.py
+    models.py
+
+  rag/
+    rag_service.py
+    knowledge_builder.py
+
+  tools/
+    __init__.py
+    base.py
+    registry.py
+    match_analyze_tool.py
+    optimize_resume_tool.py
+    interview_questions_tool.py
+    recommend_jobs_tool.py
+    utility_tools.py
+
+  copilot/
+    __init__.py
+    state.py
+    graph.py
+    prompts.py
+    summarizer.py
+
+  schemas/
+    user_schema.py
+    resume_schema.py
+    job_schema.py
+    copilot_schema.py
+```
+
+## 六、Copilot 改造计划
+
+### 阶段 0：安全修复与基础清理
+
+目标是在不改变现有功能的前提下，修复基础安全和代码质量问题。
+
+计划包括：
+
+```text
+JWT 默认密钥检测
+注册密码最小长度校验
+任务排序字段白名单
+空白文件检查与清理
+```
+
+### 阶段 1：Tool 抽象层
+
+目标是建立统一的工具协议和工具注册中心。
+
+主要内容：
+
+```text
+定义 ToolDefinition
+定义 ToolResult
+实现 ToolRegistry
+封装 match_analyze Tool
+封装 optimize_resume Tool
+封装 generate_interview_questions Tool
+封装 recommend_jobs Tool
+封装 search_knowledge / list_resumes / list_jobs 等辅助 Tool
+```
+
+阶段完成标志：
+
+```text
+ToolRegistry 可以返回全部可用 Tool
+每个 Tool 可以被独立调用
+每个 Tool 返回统一格式结果
+```
+
+### 阶段 2：LangGraph Pipeline 编排引擎
+
+目标是基于 LangGraph 实现 ReAct Agent，让系统可以根据用户目标动态调用工具。
+
+主要内容：
+
+```text
+定义 PipelineContext
+定义 PipelineState
+编写 Copilot System Prompt
+实现 Copilot Graph
+实现 LLM with Tools 调用
+实现 ToolNode 执行逻辑
+实现最终结果汇总
+```
+
+阶段完成标志：
+
+```text
+输入一句自然语言目标后，系统能够自动调用多个 Tool，并返回完整结果。
+```
+
+### 阶段 3：SSE 流式 Copilot API
+
+目标是让前端实时看到 Copilot 执行进度。
+
+主要内容：
+
+```text
+定义 SSE 事件格式
+新增 POST /api/copilot/run
+对接 LangGraph astream_events
+推送 step_start / step_complete / final 等事件
+处理工具异常和 LLM 异常
+```
+
+阶段完成标志：
+
+```text
+前端或 curl 可以看到任务执行过程的流式输出。
+```
+
+### 阶段 4：会话管理
+
+目标是保存 Copilot 执行历史和上下文。
+
+主要内容：
+
+```text
+新增 copilot_session 表
+实现 create_session / get_session / list_sessions / update_session
+新增会话查询 API
+保存工具调用记录和任务结果
+```
+
+阶段完成标志：
+
+```text
+用户可以查看历史 Copilot 会话，并恢复某次任务结果。
+```
+
+## 七、典型使用流程
+
+### 1. 用户上传简历
+
+```text
+用户登录系统
+→ 上传简历文件
+→ 系统解析简历内容
+→ 保存为用户简历记录
+```
+
+### 2. 用户保存岗位
+
+```text
+用户输入或粘贴岗位 JD
+→ 系统保存岗位信息
+→ 生成用户内 local_job_id
+```
+
+### 3. 用户发起 Copilot 任务
+
+用户输入：
+
+```text
+帮我全面准备这个岗位的面试
+```
+
+系统自动执行：
+
+```text
+读取当前简历
+→ 读取目标岗位
+→ 分析匹配度
+→ 检索知识库
+→ 生成面试题
+→ 生成准备建议
+→ 保存任务记录
+→ 返回最终报告
+```
+
+### 4. 前端展示执行过程
+
+通过 SSE 实时展示：
+
+```text
+开始规划任务
+正在执行匹配分析
+正在执行 RAG 检索
+正在生成面试题
+正在汇总结果
+任务完成
+```
+
+## 八、接口规划
+
+### Copilot 运行接口
+
+```http
+POST /api/copilot/run
+```
+
+请求示例：
+
+```json
+{
+  "goal": "帮我全面备战这个后端开发岗位",
+  "resume_id": 1,
+  "job_id": 1
+}
+```
+
+SSE 返回示例：
+
+```text
+event: plan
+data: {"steps": ["match_analyze", "search_knowledge", "generate_interview_questions"]}
+
+event: step_start
+data: {"tool": "match_analyze"}
+
+event: step_complete
+data: {"tool": "match_analyze", "success": true}
+
+event: final
+data: {"summary": "完整面试准备结果"}
+```
+
+### 会话列表接口
+
+```http
+GET /api/copilot/sessions
+```
+
+### 会话详情接口
+
+```http
+GET /api/copilot/sessions/{session_id}
+```
+
+## 九、项目亮点
+
+### 1. 从单点 AI 功能升级为 Copilot
+
+系统不是简单提供多个按钮，而是通过 Copilot 编排多个能力，完成完整求职任务。
+
+### 2. 工具层标准化
+
+将岗位匹配、简历优化、RAG 检索、面试题生成等能力封装成统一 Tool，为后续扩展更多能力打基础。
+
+### 3. LangGraph Agent 编排
+
+通过 LangGraph ReAct Agent 实现动态工具调用，使系统具备更强的任务规划能力。
+
+### 4. RAG 增强生成
+
+面试题生成不只依赖大模型通用知识，而是结合本地技术知识库，提高生成内容的针对性和技术深度。
+
+### 5. SSE 流式体验
+
+任务执行过程可以实时推送给前端，用户能够看到每一步执行状态，而不是长时间等待空白页面。
+
+### 6. 用户数据隔离
+
+系统支持多用户独立使用，每个用户有自己的简历、岗位和任务记录，具备 SaaS 化基础。
+
+## 十、后续优化方向
+
+后续可以继续扩展：
+
+```text
+多轮 Copilot 对话
+任务中断与恢复
+Human-in-the-loop 确认机制
+批量岗位对比
+求职信生成
+投递邮件生成
+面试日程管理
+更完善的 Trace 可视化
+LLM 调用重试与降级
+用户级限流
+异步任务队列
+Docker 部署
+```
+
+## 十一、项目总结
+
+JobAgent 是一个面向求职场景的 AI Copilot 系统。系统通过用户体系、简历解析、岗位管理、RAG 知识库和 AI 分析能力，帮助用户完成岗位匹配、简历优化、面试题生成和岗位推荐。后续通过 Tool 抽象层、LangGraph ReAct Agent、SSE 流式接口和会话管理，将系统从普通 AI 求职助手升级为可自动编排复杂任务的 AI 求职 Copilot。
