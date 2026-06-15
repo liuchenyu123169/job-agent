@@ -1,0 +1,61 @@
+"""简历优化工具 — 针对特定岗位生成简历优化建议。"""
+
+import logging
+
+from app.agent.workflow import run_optimize_resume_workflow
+from app.tools.base import ToolDefinition, ToolResult
+from app.tools.registry import tool_registry
+
+logger = logging.getLogger(__name__)
+
+# ── 输入参数 JSON Schema ──
+OPTIMIZE_RESUME_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "resume_id": {
+            "type": "integer",
+            "description": "简历 ID（全局 ID）",
+        },
+        "job_id": {
+            "type": "integer",
+            "description": "岗位 ID（全局 ID）",
+        },
+    },
+    "required": ["resume_id", "job_id"],
+}
+
+
+async def optimize_resume_execute(
+    resume_id: int,
+    job_id: int,
+    user_id: int,
+    **kwargs,
+) -> ToolResult:
+    """执行简历优化分析。"""
+    logger.info("[optimize_resume] resume_id=%s job_id=%s user_id=%s", resume_id, job_id, user_id)
+    try:
+        result = run_optimize_resume_workflow(
+            resume_id=int(resume_id),
+            job_id=int(job_id),
+            user_id=int(user_id),
+        )
+        if result.get("error_msg"):
+            return ToolResult.fail(str(result["error_msg"]))
+        return ToolResult.ok({
+            "task_id": result.get("task_id"),
+            "optimization": result.get("optimization") or {},
+        })
+    except Exception as exc:
+        logger.error("[optimize_resume] failed: %s", exc)
+        return ToolResult.fail(str(exc))
+
+
+# ── 构建 Tool 并注册 ──
+optimize_resume_tool = ToolDefinition(
+    name="optimize_resume",
+    description="针对特定岗位生成简历优化建议，包括技能关键词、项目建议、简历改写建议和潜在风险点。在匹配分析之后，用户想要改进简历时调用。",
+    parameters=OPTIMIZE_RESUME_PARAMETERS,
+    execute=optimize_resume_execute,
+)
+
+tool_registry.register(optimize_resume_tool)
