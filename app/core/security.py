@@ -7,7 +7,11 @@ from passlib.context import CryptContext
 from app.core.config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET_KEY
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+class DuplicateUserError(Exception):
+    """用户名重复异常。"""
+
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated=[])
 
 
 def hash_password(password: str) -> str:
@@ -20,8 +24,12 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 
 def create_access_token(data: dict[str, Any]) -> str:
     to_encode = data.copy()
-    expire = datetime.now(UTC) + timedelta(minutes=JWT_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    now = datetime.now(UTC)
+    to_encode.update({
+        "sub": str(data.get("user_id", "")),
+        "iat": now,
+        "exp": now + timedelta(minutes=JWT_EXPIRE_MINUTES),
+    })
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 

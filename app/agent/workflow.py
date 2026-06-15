@@ -1,5 +1,7 @@
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -10,183 +12,32 @@ from app.core.llm import invoke_llm
 from app.db.crud import get_job_by_id, get_resume_by_id
 from app.rag.rag_service import search_knowledge
 
-
 logger = logging.getLogger(__name__)
 
-TECH_KEYWORDS = [
-    "Spring Boot",
-    "Spring Cloud",
-    "LangChain",
-    "LangGraph",
-    "FastAPI",
-    "MyBatis",
-    "RocketMQ",
-    "RabbitMQ",
-    "Redisson",
-    "Embedding",
-    "Prompt",
-    "Chroma",
-    "Agent",
-    "Redis",
-    "MySQL",
-    "Java",
-    "JVM",
-    "Spring",
-    "Kafka",
-    "Nacos",
-    "Sentinel",
-    "Seata",
-    "Docker",
-    "Nginx",
-    "Linux",
-    "RAG",
-    "LLM",
-    "Lua",
-    "Python",
-    "线程池",
-    "多线程",
-    "并发",
-    "分布式锁",
-    "事务",
-    "索引",
-    "B+树",
-    "MVCC",
-    "缓存穿透",
-    "缓存击穿",
-    "缓存雪崩",
-    "缓存",
-    "限流",
-    "熔断",
-    "降级",
-    "分库分表",
-    "消息队列",
-    "幂等",
-    "向量数据库",
-    "锁",
-]
+# ── 通用技术术语提取（语言无关，不依赖硬编码词表） ──
 
-BACKEND_KEYWORDS = {
-    "Java",
-    "JVM",
-    "Spring",
-    "Spring Boot",
-    "MySQL",
-    "Redis",
-    "MyBatis",
-    "线程池",
-    "多线程",
-    "并发",
-    "锁",
-    "分布式锁",
-    "事务",
-    "索引",
-    "MVCC",
-    "缓存",
-    "消息队列",
-    "RocketMQ",
-    "Kafka",
-    "RabbitMQ",
-    "分库分表",
-    "幂等",
-    "限流",
+# 英文技术术语：CamelCase（React, SpringBoot）或全大写缩写（JVM, API）
+_TECH_TERM_RE = re.compile(r"\b([A-Z][a-zA-Z0-9+#.]{1,36})\b")
+# 中文引号、尖括号、方括号包裹的技术名词
+_CN_BRACKET_RE = re.compile(r"[《「【]([^》」】]+)[》」】]")
+
+# 常见英文非技术词，避免误提取
+_SKIP_WORDS: set[str] = {
+    "The", "A", "An", "I", "We", "You", "He", "She", "It", "They",
+    "This", "That", "These", "Those", "Here", "There",
+    "Is", "Are", "Was", "Were", "Be", "Been", "Being",
+    "Can", "Will", "Would", "Could", "Should", "May", "Might", "Must",
+    "Has", "Have", "Had", "Do", "Does", "Did",
+    "In", "On", "At", "To", "For", "Of", "With", "By", "From",
+    "And", "Or", "But", "Not", "No", "Yes", "If", "So",
+    "All", "Each", "Any", "Some", "More", "Most",
+    "One", "Two", "First", "Next", "Other",
+    "About", "Also", "Just", "Only", "Very", "How", "What", "When",
+    "Then", "Now", "Still", "Even", "Such", "Than", "Like",
 }
 
-AI_KEYWORDS = {
-    "LangChain",
-    "LangGraph",
-    "RAG",
-    "Agent",
-    "Embedding",
-    "Chroma",
-    "LLM",
-    "Prompt",
-    "向量数据库",
-}
-
-GENERIC_TITLE_KEYWORDS = ("面试知识点", "基础", "底层结构详解")
-CATEGORY_KEYWORDS = {
-    "java": [
-        "Java",
-        "JVM",
-        "线程池",
-        "多线程",
-        "并发",
-        "synchronized",
-        "ReentrantLock",
-        "锁",
-        "死锁",
-        "乐观锁",
-        "悲观锁",
-    ],
-    "mysql": [
-        "MySQL",
-        "索引",
-        "B+树",
-        "事务",
-        "MVCC",
-        "InnoDB",
-        "binlog",
-        "redo log",
-        "undo log",
-        "主从复制",
-        "SQL",
-        "慢查询",
-    ],
-    "redis": [
-        "Redis",
-        "缓存",
-        "分布式锁",
-        "Lua",
-        "Redisson",
-        "缓存穿透",
-        "缓存击穿",
-        "缓存雪崩",
-        "key",
-        "过期时间",
-    ],
-    "agent": [
-        "Agent",
-        "RAG",
-        "LangGraph",
-        "LangChain",
-        "Embedding",
-        "Chroma",
-        "向量数据库",
-        "Prompt",
-        "LLM",
-    ],
-}
-TECH_KEYWORD_VARIANTS = {
-    "Spring Boot": ["spring boot", "springboot"],
-    "Spring Cloud": ["spring cloud", "springcloud"],
-    "MyBatis": ["mybatis"],
-    "RocketMQ": ["rocketmq"],
-    "RabbitMQ": ["rabbitmq"],
-    "Redisson": ["redisson"],
-    "Embedding": ["embedding"],
-    "Prompt": ["prompt"],
-    "Chroma": ["chroma"],
-    "Agent": ["agent"],
-    "Redis": ["redis"],
-    "MySQL": ["mysql"],
-    "Java": ["java"],
-    "JVM": ["jvm"],
-    "Spring": ["spring"],
-    "Kafka": ["kafka"],
-    "Nacos": ["nacos"],
-    "Sentinel": ["sentinel"],
-    "Seata": ["seata"],
-    "Docker": ["docker"],
-    "Nginx": ["nginx"],
-    "Linux": ["linux"],
-    "RAG": ["rag"],
-    "LLM": ["llm"],
-    "Lua": ["lua"],
-    "Python": ["python"],
-    "LangChain": ["langchain"],
-    "LangGraph": ["langgraph"],
-    "FastAPI": ["fastapi"],
-}
+# 用于从文本中提取短命题（中文场景：顿号/逗号分隔的技术短语）
+_CN_PHRASE_RE = re.compile(r"[一-鿿、。，《》！？；：“”‘’—…]{2,}")
 
 
 def _rag_log(message: str) -> None:
@@ -194,235 +45,230 @@ def _rag_log(message: str) -> None:
     logger.info(message)
 
 
-def extract_tech_keywords(text: str) -> list[str]:
-    source_text = text or ""
-    normalized_text = source_text.lower()
-    keywords: list[str] = []
-    seen: set[str] = set()
+def _extract_tech_terms(text: str) -> list[str]:
+    """从文本中提取技术术语（语言无关，正则匹配，不依赖硬编码词表）。
 
-    for keyword in TECH_KEYWORDS:
-        if keyword in seen:
+    提取规则：
+    1. 英文 CamelCase / 全大写缩写词，过滤常见非技术词
+    2. 中文书名号/方括号包裹的专有名词
+    """
+    source = text or ""
+    terms: list[str] = []
+    seen: set[str] = {"API", "SDK", "JDK", "JVM"}  # 少数几个极常见的不算
+
+    # 英文技术术语
+    for match in _TECH_TERM_RE.finditer(source):
+        word = match.group(1)
+        if word in _SKIP_WORDS or word.lower() in _SKIP_WORDS:
             continue
-        if keyword.isascii():
-            variants = TECH_KEYWORD_VARIANTS.get(keyword, [keyword.lower()])
-            for variant in variants:
-                pattern = rf"(?<![a-z0-9+#]){re.escape(variant)}(?![a-z0-9+#])"
-                if re.search(pattern, normalized_text):
-                    keywords.append(keyword)
-                    seen.add(keyword)
-                    break
-        elif keyword in source_text:
-            keywords.append(keyword)
-            seen.add(keyword)
+        if word in seen:
+            continue
+        seen.add(word)
+        terms.append(word)
 
-    return keywords
+    # 中文书名号/方括号里的专有名词（如《深入理解 JVM》）
+    for match in _CN_BRACKET_RE.finditer(source):
+        phrase = match.group(1).strip()
+        if len(phrase) >= 2 and phrase not in seen:
+            seen.add(phrase)
+            terms.append(phrase)
+
+    return terms
 
 
-def _content_for_item(item: dict[str, Any]) -> str:
-    return str(item.get("clean_content") or item.get("content") or "").strip()
+def _get_kb_source_names(knowledge_dir: str = "") -> list[str]:
+    """从知识库文件名自动推断知识来源类别（文件名即类别）。"""
+    base = Path(knowledge_dir) if knowledge_dir else Path("data/knowledge")
+    if not base.exists() or not base.is_dir():
+        return []
+    names: list[str] = []
+    for fpath in sorted(base.rglob("*.md")):
+        names.append(fpath.stem)
+    for fpath in sorted(base.rglob("*.txt")):
+        names.append(fpath.stem)
+    return names
 
 
 def _dedupe_key(item: dict[str, Any]) -> str:
+    """去重键：来源 + 标题（或内容前 50 字）。"""
     source = str(item.get("source") or "").strip()
     title = str(item.get("title") or "").strip()
-    content = _content_for_item(item)
+    content = str(item.get("content") or "").strip()
     return f"{source}::{title or content[:50]}"
 
 
-def _normalize_text(text: str) -> str:
-    return " ".join((text or "").lower().split())
+def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
+    """RAG 知识检索节点（通用版）。
 
+    流程：
+    1. 用正则从简历+JD 中提取技术术语（任何技术栈通用）
+    2. 按"术语"和"知识库来源×术语"两维度构造查询
+    3. 向量搜索 → 去重 → 按相似度排序 → 来源多样性选取 TOP 5
+    """
+    if state.get("error_msg"):
+        return {}
+    if state.get("enable_rag") is False:
+        _rag_log("[RAG][interview] skipped: enable_rag=false")
+        return {
+            "knowledge_context": "",
+            "knowledge_used": False,
+            "knowledge_count": 0,
+            "rag_queries": [],
+            "rag_hit_titles": [],
+            "rag_hit_sources": [],
+        }
 
-def _contains_keyword(text: str, keyword: str) -> bool:
-    normalized_text = _normalize_text(text)
-    normalized_keyword = _normalize_text(keyword)
-    if not normalized_keyword:
-        return False
-    if keyword.isascii():
-        pattern = rf"(?<![a-z0-9+#]){re.escape(normalized_keyword)}(?![a-z0-9+#])"
-        return re.search(pattern, normalized_text) is not None
-    return normalized_keyword in normalized_text
+    resume = state.get("resume") or {}
+    job = state.get("job") or {}
+    resume_content = str(resume.get("content", ""))
+    job_jd = str(job.get("jd_text", ""))
 
+    _rag_log("[RAG][interview] retrieve_knowledge_node started")
 
-def _match_keyword_count(text: str, keywords: list[str]) -> int:
-    return sum(1 for keyword in keywords if _contains_keyword(text, keyword))
+    # ── 1. 动态提取技术术语（语言无关） ──
+    job_terms = _extract_tech_terms(job_jd)
+    resume_terms = _extract_tech_terms(resume_content)
+    all_terms = list(dict.fromkeys(job_terms + resume_terms))  # 保序去重
+    kb_sources = _get_kb_source_names()
 
+    _rag_log(f"[RAG] job_terms={job_terms}")
+    _rag_log(f"[RAG] resume_terms={resume_terms}")
+    _rag_log(f"[RAG] kb_sources={kb_sources}")
 
-def _rank_knowledge_item(
-    item: dict[str, Any],
-    job_keywords: list[str],
-    resume_keywords: list[str],
-    has_ai_keywords: bool,
-) -> float:
-    score = item.get("score")
-    distance = float(score) if score is not None else 999.0
-    rank_score = -distance
+    # ── 2. 动态构造查询计划 ──
+    query_plan: list[tuple[str, str, int]] = []
 
-    title = str(item.get("title") or "")
-    source = str(item.get("source") or "").lower()
-    content = _content_for_item(item)
-    text_blob = f"{title}\n{content}"
+    # 维度A：纯术语作为查询
+    for term in all_terms:
+        query_plan.append((f"term:{term}", f"{term} 面试题", 2))
 
-    rank_score += _match_keyword_count(text_blob, job_keywords) * 2.0
-    rank_score += _match_keyword_count(text_blob, resume_keywords) * 1.5
+    # 维度B：知识库来源 × 前几个术语组合查询
+    top_terms = all_terms[:4]
+    for source in kb_sources:
+        prefix = f"{source} 面试"
+        if top_terms:
+            combined = f"{prefix} {' '.join(top_terms)}"
+        else:
+            combined = f"{prefix} 核心知识点"
+        query_plan.append((f"source×term:{source}", combined, 3))
 
-    source_bonus_keywords = {
-        "java": "Java",
-        "mysql": "MySQL",
-        "redis": "Redis",
-    }
-    all_keywords = set(job_keywords) | set(resume_keywords)
-    for source_key, keyword in source_bonus_keywords.items():
-        if source_key in source and keyword in all_keywords:
-            rank_score += 2.0
+    # 兜底：如果术语和知识库都太少
+    if not query_plan:
+        query_plan.append(("fallback", "面试题 核心技术 原理", 5))
 
-    if "agent" in source:
-        rank_score += 2.0 if has_ai_keywords else -2.0
+    _rag_log(f"[RAG] query_plan count={len(query_plan)}")
 
-    if len(content) < 50:
-        rank_score -= 3.0
+    # ── 3. 并发执行查询（线程池），合并结果 ──
+    merged_items: list[dict[str, Any]] = []
+    errors: list[str] = []
 
-    if any(generic in title for generic in GENERIC_TITLE_KEYWORDS):
-        rank_score -= 2.0
+    if query_plan:
+        with ThreadPoolExecutor(max_workers=min(len(query_plan), 8)) as pool:
+            future_to_name: dict = {}
+            for name, query_text, top_k in query_plan:
+                future = pool.submit(search_knowledge, query_text, top_k)
+                future_to_name[future] = name
 
-    return rank_score
+            for future in as_completed(future_to_name):
+                name = future_to_name[future]
+                try:
+                    items = future.result()
+                    _rag_log(f"[RAG] {name}_hits={len(items)}")
+                    merged_items.extend(items)
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+                    _rag_log(f"[RAG] query failed {name}: {exc}")
 
+    if not merged_items:
+        _rag_log(f"[RAG] no results: errors={'|'.join(errors)}" if errors else "[RAG] no results")
+        return {
+            "knowledge_context": "",
+            "knowledge_used": False,
+            "knowledge_count": 0,
+            "rag_queries": [q for _, q, _ in query_plan],
+            "rag_hit_titles": [],
+            "rag_hit_sources": [],
+        }
 
-def _looks_like_ai_agent_job(job_jd: str) -> bool:
-    normalized = _normalize_text(job_jd)
-    return any(
-        phrase in normalized
-        for phrase in ("ai应用开发", "agent", "rag", "langgraph", "langchain")
-    )
-
-
-def _detect_required_categories(job_keywords: list[str], resume_keywords: list[str]) -> list[str]:
-    all_keywords = set(job_keywords) | set(resume_keywords)
-    required: list[str] = []
-
-    mysql_signals = {"MySQL", "索引", "事务", "MVCC", "SQL", "InnoDB"}
-    redis_signals = {"Redis", "缓存", "分布式锁", "Lua", "Redisson"}
-    java_signals = {"Java", "JVM", "Spring Boot", "线程池", "多线程", "并发", "锁"}
-    agent_signals = {"Agent", "RAG", "LangGraph", "LangChain", "Embedding", "Chroma", "LLM", "Prompt"}
-
-    if all_keywords & mysql_signals:
-        required.append("mysql")
-    if all_keywords & redis_signals:
-        required.append("redis")
-    if all_keywords & java_signals:
-        required.append("java")
-    if all_keywords & agent_signals:
-        required.append("agent")
-
-    if not required:
-        required = ["java", "mysql", "redis"]
-
-    return required
-
-
-def _detect_category(item: dict[str, Any]) -> str:
-    source = str(item.get("source") or "").lower()
-    title = str(item.get("title") or "")
-    content = _content_for_item(item)
-    text_blob = f"{title}\n{content}"
-
-    if "redis" in source:
-        return "redis"
-    if "mysql" in source:
-        return "mysql"
-    if "java" in source:
-        return "java"
-    if "agent" in source:
-        return "agent"
-
-    if any(_contains_keyword(text_blob, keyword) for keyword in CATEGORY_KEYWORDS["redis"]):
-        return "redis"
-    if any(_contains_keyword(text_blob, keyword) for keyword in CATEGORY_KEYWORDS["mysql"]):
-        return "mysql"
-    if any(_contains_keyword(text_blob, keyword) for keyword in CATEGORY_KEYWORDS["java"]):
-        return "java"
-    if any(_contains_keyword(text_blob, keyword) for keyword in CATEGORY_KEYWORDS["agent"]):
-        return "agent"
-    return "other"
-
-
-def _category_core_match(category: str, item: dict[str, Any]) -> bool:
-    if category not in CATEGORY_KEYWORDS:
-        return False
-    title = str(item.get("title") or "")
-    content = _content_for_item(item)
-    text_blob = f"{title}\n{content}"
-    return any(_contains_keyword(text_blob, keyword) for keyword in CATEGORY_KEYWORDS[category])
-
-
-def _select_balanced_items(
-    ranked_items: list[dict[str, Any]],
-    required_categories: list[str],
-    allow_agent_limit: int,
-) -> list[dict[str, Any]]:
-    category_groups: dict[str, list[dict[str, Any]]] = {
-        "java": [],
-        "mysql": [],
-        "redis": [],
-        "agent": [],
-        "other": [],
-    }
-    for item in ranked_items:
-        category_groups[item["category"]].append(item)
-
-    selected: list[dict[str, Any]] = []
-    selected_keys: set[str] = set()
-    category_counts: dict[str, int] = {key: 0 for key in category_groups}
-
-    for category in required_categories:
-        candidates = category_groups.get(category, [])
-        if category == "agent" and allow_agent_limit <= 0:
+    # ── 4. 去重 + 过滤过短内容 + 按向量分数排序 ──
+    deduped: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for item in merged_items:
+        content = str(item.get("content") or "").strip()
+        if len(content) < 40:
             continue
-        for candidate in candidates:
-            key = _dedupe_key(candidate)
-            if key in selected_keys:
-                continue
-            if category == "agent" and category_counts["agent"] >= allow_agent_limit:
-                break
-            selected.append(candidate)
-            selected_keys.add(key)
-            category_counts[category] += 1
-            _rag_log(
-                f"[RAG] selected category={category} title={candidate.get('title') or '<empty>'} "
-                f"source={candidate.get('source') or '<empty>'} rank_score={candidate.get('rank_score')}"
-            )
+        key = _dedupe_key(item)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(dict(item))
+
+    deduped.sort(key=lambda x: x.get("score") if x.get("score") is not None else 999.0)
+
+    # ── 5. 来源多样性选取 TOP 5 ──
+    final_items: list[dict[str, Any]] = []
+    source_counts: dict[str, int] = {}
+    MAX_PER_SOURCE = 2
+
+    for item in deduped:
+        if len(final_items) >= 5:
             break
-        if len(selected) >= 5:
-            return selected[:5]
-
-    for candidate in ranked_items:
-        if len(selected) >= 5:
-            break
-        key = _dedupe_key(candidate)
-        if key in selected_keys:
+        source = str(item.get("source") or "")
+        if source_counts.get(source, 0) >= MAX_PER_SOURCE:
             continue
-        if candidate["category"] == "agent" and category_counts["agent"] >= allow_agent_limit:
-            continue
-        if candidate["category"] == "agent" and "agent" not in required_categories and allow_agent_limit <= 0:
-            continue
-        selected.append(candidate)
-        selected_keys.add(key)
-        category_counts[candidate["category"]] += 1
+        final_items.append(item)
+        source_counts[source] = source_counts.get(source, 0) + 1
 
-    if len(selected) < 5 and allow_agent_limit <= 0:
-        for candidate in ranked_items:
-            if len(selected) >= 5:
-                break
-            if candidate["category"] != "agent":
-                continue
-            key = _dedupe_key(candidate)
-            if key in selected_keys:
-                continue
-            selected.append(candidate)
-            selected_keys.add(key)
-            category_counts["agent"] += 1
+    # ── 6. 格式化输出 ──
+    blocks: list[str] = []
+    hit_titles: list[str] = []
+    hit_sources: list[str] = []
 
-    return selected[:5]
+    for index, item in enumerate(final_items, start=1):
+        title = str(item.get("title") or "").strip()
+        source = str(item.get("source") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+
+        _rag_log(
+            f"[RAG] hit title={title or '<empty>'} "
+            f"source={source or '<empty>'} score={item.get('score')}"
+        )
+
+        blocks.append(
+            "\n".join([
+                f"【知识片段{index}】",
+                f"标题：{title}",
+                f"来源：{source}",
+                f"内容：{content}",
+            ])
+        )
+        hit_titles.append(title)
+        hit_sources.append(source)
+
+    knowledge_count = len(blocks)
+    _rag_log(f"[RAG] final knowledge_count={knowledge_count}")
+
+    if not blocks:
+        _rag_log("[RAG] fallback: all items filtered out")
+        return {
+            "knowledge_context": "",
+            "knowledge_used": False,
+            "knowledge_count": 0,
+            "rag_queries": [q for _, q, _ in query_plan],
+            "rag_hit_titles": [],
+            "rag_hit_sources": [],
+        }
+
+    return {
+        "knowledge_context": "\n\n".join(blocks),
+        "knowledge_used": True,
+        "knowledge_count": knowledge_count,
+        "rag_queries": [q for _, q, _ in query_plan],
+        "rag_hit_titles": hit_titles,
+        "rag_hit_sources": hit_sources,
+    }
 
 
 def load_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
@@ -539,198 +385,6 @@ def save_optimize_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
         user_id=state["user_id"],
     )
     return {"task_id": task_id}
-
-
-def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    if state.get("error_msg"):
-        return {}
-    if state.get("enable_rag") is False:
-        _rag_log("[RAG][interview] skipped: enable_rag=false")
-        return {
-            "knowledge_context": "",
-            "knowledge_used": False,
-            "knowledge_count": 0,
-            "rag_queries": [],
-            "rag_hit_titles": [],
-            "rag_hit_sources": [],
-        }
-
-    resume = state.get("resume") or {}
-    job = state.get("job") or {}
-    resume_content = str(resume.get("content", ""))
-    job_jd = str(job.get("jd_text", ""))
-
-    _rag_log("[RAG][interview] retrieve_knowledge_node started")
-
-    job_keywords = extract_tech_keywords(job_jd)
-    resume_keywords = extract_tech_keywords(resume_content)
-    all_keywords = list(dict.fromkeys(job_keywords + resume_keywords))
-    backend_keywords = [keyword for keyword in all_keywords if keyword in BACKEND_KEYWORDS]
-    has_ai_keywords = any(keyword in AI_KEYWORDS for keyword in all_keywords)
-    required_categories = _detect_required_categories(job_keywords, resume_keywords)
-    allow_agent_limit = 0
-    if "agent" in required_categories:
-        allow_agent_limit = 2 if _looks_like_ai_agent_job(job_jd) else 1
-
-    job_query = f"岗位核心技术栈面试题：{' '.join(job_keywords)}" if job_keywords else ""
-    resume_query = f"候选人项目技术栈面试追问：{' '.join(resume_keywords)}" if resume_keywords else ""
-    backend_query = (
-        f"Java 后端基础面试题：{' '.join(backend_keywords)}"
-        if backend_keywords
-        else "Java 后端 MySQL Redis Spring Boot JVM 并发 线程池 索引 缓存 分布式锁"
-    )
-    mysql_query = (
-        "MySQL 面试题 索引 B+树 事务 MVCC InnoDB SQL 慢查询 主从复制 binlog redo log undo log"
-        if "mysql" in required_categories
-        else ""
-    )
-    ai_query = (
-        "AI 应用 RAG Agent LangGraph Embedding 向量数据库 面试题"
-        if has_ai_keywords
-        else ""
-    )
-
-    _rag_log(f"[RAG] job_keywords={job_keywords}")
-    _rag_log(f"[RAG] resume_keywords={resume_keywords}")
-    _rag_log(f"[RAG] job_query={job_query or '<empty>'}")
-    _rag_log(f"[RAG] resume_query={resume_query or '<empty>'}")
-    _rag_log(f"[RAG] backend_query={backend_query}")
-    _rag_log(f"[RAG] mysql_query={mysql_query or '<skipped>'}")
-    _rag_log(f"[RAG] ai_query={ai_query or '<skipped>'}")
-    _rag_log(f"[RAG] required_categories={required_categories}")
-
-    query_plan: list[tuple[str, str, int]] = []
-    if job_query:
-        query_plan.append(("job", job_query, 3))
-    if resume_query:
-        query_plan.append(("resume", resume_query, 3))
-    query_plan.append(("backend", backend_query, 4))
-    if mysql_query:
-        query_plan.append(("mysql", mysql_query, 3))
-    if ai_query:
-        query_plan.append(("ai", ai_query, 2))
-
-    merged_items: list[dict[str, Any]] = []
-    errors: list[str] = []
-
-    for query_name, query_text, top_k in query_plan:
-        try:
-            items = search_knowledge(query=query_text, top_k=top_k)
-            _rag_log(f"[RAG] {query_name}_hits={len(items)}")
-            merged_items.extend(items)
-        except Exception as exc:
-            errors.append(f"{query_name}: {exc}")
-            _rag_log(f"[RAG] fallback on {query_name}_query: {exc}")
-
-    if not merged_items:
-        if errors:
-            _rag_log(f"[RAG] fallback: all retrieval failed: {' | '.join(errors)}")
-        else:
-            _rag_log("[RAG] fallback: no knowledge matched")
-        return {
-            "knowledge_context": "",
-            "knowledge_used": False,
-            "knowledge_count": 0,
-            "rag_queries": [query for _, query, _ in query_plan],
-            "rag_hit_titles": [],
-            "rag_hit_sources": [],
-        }
-
-    deduped_items: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-    for item in merged_items:
-        content = _content_for_item(item)
-        category = _detect_category(item)
-        short_content = len(content) < 50
-        if short_content and not _category_core_match(category, item):
-            continue
-        key = _dedupe_key(item)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        item_copy = dict(item)
-        item_copy["category"] = category
-        if short_content:
-            item_copy["short_content_penalty"] = 1
-        deduped_items.append(item_copy)
-
-    ranked_items: list[dict[str, Any]] = []
-    for item in deduped_items:
-        item_with_rank = dict(item)
-        item_with_rank["rank_score"] = _rank_knowledge_item(
-            item=item,
-            job_keywords=job_keywords,
-            resume_keywords=resume_keywords,
-            has_ai_keywords=has_ai_keywords,
-        )
-        if item_with_rank.get("short_content_penalty"):
-            item_with_rank["rank_score"] -= 3.0
-        ranked_items.append(item_with_rank)
-
-    ranked_items.sort(key=lambda item: item["rank_score"], reverse=True)
-    for category in ("mysql", "redis", "java", "agent", "other"):
-        candidates = [item for item in ranked_items if item.get("category") == category]
-        _rag_log(f"[RAG] category={category} candidates={len(candidates)}")
-
-    final_items = _select_balanced_items(
-        ranked_items=ranked_items,
-        required_categories=required_categories,
-        allow_agent_limit=allow_agent_limit,
-    )
-
-    blocks: list[str] = []
-    hit_titles: list[str] = []
-    hit_sources: list[str] = []
-    for index, item in enumerate(final_items, start=1):
-        title = str(item.get("title") or "").strip()
-        source = str(item.get("source") or "").strip()
-        score = item.get("score")
-        rank_score = item.get("rank_score")
-        content = _content_for_item(item)
-        if not content:
-            continue
-
-        _rag_log(
-            "[RAG] hit "
-            f"title={title or '<empty>'} source={source or '<empty>'} "
-            f"score={score} rank_score={rank_score}"
-        )
-
-        blocks.append(
-            "\n".join(
-                [
-                    f"【知识片段{index}】",
-                    f"标题：{title}",
-                    f"来源：{source}",
-                    f"内容：{content}",
-                ]
-            )
-        )
-        hit_titles.append(title)
-        hit_sources.append(source)
-
-    knowledge_count = len(blocks)
-    _rag_log(f"[RAG] final knowledge_count={knowledge_count}")
-
-    if not blocks:
-        _rag_log("[RAG] fallback: all merged items filtered out")
-        return {
-            "knowledge_context": "",
-            "knowledge_used": False,
-            "knowledge_count": 0,
-            "rag_queries": [query for _, query, _ in query_plan],
-            "rag_hit_titles": [],
-            "rag_hit_sources": [],
-        }
-
-    return {
-        "knowledge_context": "\n\n".join(blocks),
-        "knowledge_used": True,
-        "knowledge_count": knowledge_count,
-        "rag_queries": [query for _, query, _ in query_plan],
-        "rag_hit_titles": hit_titles,
-        "rag_hit_sources": hit_sources,
-    }
 
 
 def build_interview_questions_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:

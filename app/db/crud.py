@@ -3,6 +3,7 @@ import sqlite3
 from typing import Any
 
 from app.core.constants import DEFAULT_USER_ID
+from app.core.security import DuplicateUserError
 from app.db.database import get_conn
 
 
@@ -70,7 +71,7 @@ def create_user(username: str, password_hash: str) -> dict[str, Any]:
     except sqlite3.IntegrityError as exc:
         if conn is not None:
             conn.rollback()
-        raise RuntimeError("Username already exists") from exc
+        raise DuplicateUserError("Username already exists") from exc
     except sqlite3.Error as exc:
         if conn is not None:
             conn.rollback()

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import DuplicateUserError, create_access_token, hash_password, verify_password
 from app.db.crud import create_user, get_user_by_username
 from app.schemas.user_schema import (
     CurrentUserResponse,
@@ -25,16 +25,10 @@ def _build_token_response(user: dict) -> TokenResponse:
 
 @router.post("/register", response_model=TokenResponse)
 def register(payload: RegisterRequest) -> TokenResponse:
-    existing_user = get_user_by_username(payload.username)
-    if existing_user is not None:
-        raise HTTPException(status_code=400, detail="Username already exists")
-
     try:
         user = create_user(payload.username, hash_password(payload.password))
-    except RuntimeError as exc:
-        if "Username already exists" in str(exc):
-            raise HTTPException(status_code=400, detail="Username already exists") from exc
-        raise
+    except DuplicateUserError:
+        raise HTTPException(status_code=400, detail="Username already exists")
     return _build_token_response(user)
 
 
