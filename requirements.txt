@@ -9,5 +9,8 @@ langchain-openai
 python-dotenv
 langgraph
 python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<5
 pypdf
 python-docx

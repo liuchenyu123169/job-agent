@@ -4,7 +4,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.common import parse_llm_json_output, read_prompt_template, save_success_task
+from app.agent.common import analyze_resume_job, parse_llm_json_output, read_prompt_template, save_success_task
 from app.agent.state import AgentAnalyzeState
 from app.core.llm import invoke_llm
 from app.db.crud import get_job_by_id, get_resume_by_id
@@ -426,7 +426,7 @@ def _select_balanced_items(
 
 
 def load_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    resume = get_resume_by_id(state["resume_id"])
+    resume = get_resume_by_id(state["resume_id"], user_id=state["user_id"])
     if resume is None:
         return {"error_msg": "Resume not found"}
     return {"resume": resume}
@@ -436,7 +436,7 @@ def load_job_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    job = get_job_by_id(state["job_id"])
+    job = get_job_by_id(state["job_id"], user_id=state["user_id"])
     if job is None:
         return {"error_msg": "Job not found"}
     return {"job": job}
@@ -458,17 +458,18 @@ def llm_analyze_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    raw_output = invoke_llm(state["prompt"])
-    return {"raw_output": raw_output}
+    analysis = analyze_resume_job(
+        resume_content=state["resume"]["content"],
+        job_jd=state["job"]["jd_text"],
+    )
+    return {"analysis": analysis}
 
 
 def parse_result_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    raw_output = state["raw_output"] or ""
-    analysis = parse_llm_json_output(raw_output)
-    return {"analysis": analysis}
+    return {"analysis": state.get("analysis") or {}}
 
 
 def save_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
@@ -480,6 +481,13 @@ def save_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
         resume_id=state["resume_id"],
         job_id=state["job_id"],
         output_data=state["analysis"],
+        input_data={
+            "resume_id": state["resume_id"],
+            "job_id": state["job_id"],
+            "local_resume_id": (state.get("resume") or {}).get("local_resume_id"),
+            "local_job_id": (state.get("job") or {}).get("local_job_id"),
+        },
+        user_id=state["user_id"],
     )
     return {"task_id": task_id}
 
@@ -522,6 +530,13 @@ def save_optimize_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
         resume_id=state["resume_id"],
         job_id=state["job_id"],
         output_data=state["optimization"],
+        input_data={
+            "resume_id": state["resume_id"],
+            "job_id": state["job_id"],
+            "local_resume_id": (state.get("resume") or {}).get("local_resume_id"),
+            "local_job_id": (state.get("job") or {}).get("local_job_id"),
+        },
+        user_id=state["user_id"],
     )
     return {"task_id": task_id}
 
@@ -758,6 +773,8 @@ def save_questions_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
         input_data={
             "resume_id": state["resume_id"],
             "job_id": state["job_id"],
+            "local_resume_id": (state.get("resume") or {}).get("local_resume_id"),
+            "local_job_id": (state.get("job") or {}).get("local_job_id"),
             "enable_rag": bool(state.get("enable_rag", True)),
             "knowledge_used": bool(state.get("knowledge_used")),
             "knowledge_count": state.get("knowledge_count") or 0,
@@ -765,6 +782,7 @@ def save_questions_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
             "rag_hit_titles": state.get("rag_hit_titles") or [],
             "rag_hit_sources": state.get("rag_hit_sources") or [],
         },
+        user_id=state["user_id"],
     )
     return {"task_id": task_id}
 
@@ -847,8 +865,9 @@ interview_workflow.add_edge("save_questions_task", END)
 interview_graph = interview_workflow.compile()
 
 
-def run_analyze_workflow(resume_id: int, job_id: int) -> dict[str, Any]:
+def run_analyze_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str, Any]:
     initial_state: AgentAnalyzeState = {
+        "user_id": user_id,
         "resume_id": resume_id,
         "job_id": job_id,
         "enable_rag": None,
@@ -876,8 +895,9 @@ def run_analyze_workflow(resume_id: int, job_id: int) -> dict[str, Any]:
     }
 
 
-def run_optimize_resume_workflow(resume_id: int, job_id: int) -> dict[str, Any]:
+def run_optimize_resume_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str, Any]:
     initial_state: AgentAnalyzeState = {
+        "user_id": user_id,
         "resume_id": resume_id,
         "job_id": job_id,
         "enable_rag": None,
@@ -905,8 +925,14 @@ def run_optimize_resume_workflow(resume_id: int, job_id: int) -> dict[str, Any]:
     }
 
 
-def run_interview_questions_workflow(resume_id: int, job_id: int, enable_rag: bool = True) -> dict[str, Any]:
+def run_interview_questions_workflow(
+    resume_id: int,
+    job_id: int,
+    user_id: int,
+    enable_rag: bool = True,
+) -> dict[str, Any]:
     initial_state: AgentAnalyzeState = {
+        "user_id": user_id,
         "resume_id": resume_id,
         "job_id": job_id,
         "enable_rag": enable_rag,

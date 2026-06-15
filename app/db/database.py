@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+from app.core.constants import DEFAULT_USER_ID
+
 
 DB_PATH = Path(__file__).resolve().parents[2] / "job_agent.db"
 
@@ -14,39 +16,143 @@ def get_conn() -> sqlite3.Connection:
         raise RuntimeError(f"Failed to connect to database: {DB_PATH}") from exc
 
 
+def _get_table_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return {str(row[1]) for row in cursor.fetchall()}
+
+
+def _ensure_user_id_column(cursor: sqlite3.Cursor, table_name: str) -> None:
+    columns = _get_table_columns(cursor, table_name)
+    if "user_id" not in columns:
+        cursor.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN user_id INTEGER DEFAULT {DEFAULT_USER_ID}"
+        )
+    cursor.execute(
+        f"UPDATE {table_name} SET user_id = ? WHERE user_id IS NULL",
+        (DEFAULT_USER_ID,),
+    )
+
+
+def _ensure_local_id_column(
+    cursor: sqlite3.Cursor,
+    table_name: str,
+    column_name: str,
+) -> None:
+    columns = _get_table_columns(cursor, table_name)
+    if column_name not in columns:
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} INTEGER")
+
+
+def _backfill_local_ids(
+    cursor: sqlite3.Cursor,
+    table_name: str,
+    local_id_column: str,
+) -> None:
+    cursor.execute(
+        f"""
+        SELECT id, user_id
+        FROM {table_name}
+        ORDER BY user_id ASC, COALESCE(created_at, CURRENT_TIMESTAMP) ASC, id ASC
+        """
+    )
+    rows = cursor.fetchall()
+    counters: dict[int, int] = {}
+    for row in rows:
+        row_id = int(row["id"])
+        user_id = int(row["user_id"] or DEFAULT_USER_ID)
+        counters[user_id] = counters.get(user_id, 0) + 1
+        cursor.execute(
+            f"""
+            UPDATE {table_name}
+            SET {local_id_column} = ?
+            WHERE id = ? AND ({local_id_column} IS NULL OR {local_id_column} <= 0)
+            """,
+            (counters[user_id], row_id),
+        )
+
+
+def _ensure_local_id_index(
+    cursor: sqlite3.Cursor,
+    table_name: str,
+    local_id_column: str,
+) -> None:
+    cursor.execute(
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_user_{local_id_column}_unique
+        ON {table_name} (user_id, {local_id_column})
+        WHERE {local_id_column} IS NOT NULL
+        """
+    )
+
+
+def _ensure_user_table(cursor: sqlite3.Cursor) -> None:
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user (
+            id INTEGER PRIMARY KEY,
+            username TEXT NOT NULL,
+            password_hash TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    columns = _get_table_columns(cursor, "user")
+    if "password_hash" not in columns:
+        cursor.execute("ALTER TABLE user ADD COLUMN password_hash TEXT")
+    if "updated_at" not in columns:
+        cursor.execute("ALTER TABLE user ADD COLUMN updated_at DATETIME")
+    cursor.execute(
+        """
+        UPDATE user
+        SET updated_at = COALESCE(updated_at, created_at, datetime('now'))
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_username_unique
+        ON user (username)
+        """
+    )
+
+
 def init_db() -> None:
     conn: sqlite3.Connection | None = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
 
+        _ensure_user_table(cursor)
+
         cursor.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS resume (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_name TEXT NOT NULL,
                 content TEXT NOT NULL,
                 parsed_json TEXT,
+                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
 
         cursor.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS job (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 company TEXT,
                 title TEXT NOT NULL,
                 jd_text TEXT NOT NULL,
                 parsed_json TEXT,
+                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
 
         cursor.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS agent_task (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_type TEXT NOT NULL,
@@ -56,6 +162,7 @@ def init_db() -> None:
                 output_json TEXT,
                 status TEXT NOT NULL,
                 error_msg TEXT,
+                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (resume_id) REFERENCES resume (id),
@@ -63,6 +170,24 @@ def init_db() -> None:
             )
             """
         )
+
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO user (id, username, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            """,
+            (DEFAULT_USER_ID, "default_user"),
+        )
+
+        _ensure_user_id_column(cursor, "resume")
+        _ensure_user_id_column(cursor, "job")
+        _ensure_user_id_column(cursor, "agent_task")
+        _ensure_local_id_column(cursor, "resume", "local_resume_id")
+        _ensure_local_id_column(cursor, "job", "local_job_id")
+        _backfill_local_ids(cursor, "resume", "local_resume_id")
+        _backfill_local_ids(cursor, "job", "local_job_id")
+        _ensure_local_id_index(cursor, "resume", "local_resume_id")
+        _ensure_local_id_index(cursor, "job", "local_job_id")
 
         conn.commit()
     except sqlite3.Error as exc:

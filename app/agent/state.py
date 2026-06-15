@@ -2,6 +2,7 @@ from typing import Any, TypedDict
 
 
 class AgentAnalyzeState(TypedDict):
+    user_id: int
     resume_id: int
     job_id: int
     enable_rag: bool | None
