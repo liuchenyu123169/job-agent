@@ -281,6 +281,9 @@ export const copilotApi = {
   listTools() {
     return safeGet("/api/copilot/tools", undefined, "listTools");
   },
+  listSkills() {
+    return safeGet("/api/copilot/skills", undefined, "listSkills");
+  },
   listSessions(limit = 20) {
     return safeGet("/api/copilot/sessions", { params: { limit } }, "listSessions");
   },

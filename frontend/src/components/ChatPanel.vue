@@ -8,19 +8,24 @@ const currentResume = inject("currentResume");
 const currentJob = inject("currentJob");
 const fetchTasks = inject("fetchTasks");
 
-/* ── 工具元数据（从后端动态加载） ── */
-const toolMetaMap = ref({});  // { name: { description, keywords, render_type } }
+/* ── 工具元数据 + Skill 列表（从后端动态加载） ── */
+const toolMetaMap = ref({});     // { name: { description, keywords, render_type } }
+const skillList = ref([]);       // [{ name, description, keywords, mode, sub_agents, tools }]
 
-async function loadToolMeta() {
+async function loadMeta() {
   try {
-    const tools = await api.copilotApi.listTools();
+    const [tools, skills] = await Promise.all([
+      api.copilotApi.listTools(),
+      api.copilotApi.listSkills(),
+    ]);
     const map = {};
     for (const t of tools) map[t.name] = t;
     toolMetaMap.value = map;
+    skillList.value = skills;
   } catch { /* 静默降级：用硬编码兜底 */ }
 }
 
-loadToolMeta();
+loadMeta();
 
 /* ── 聊天状态 ── */
 const messages = ref([]);       // {role, text?, steps?, final?, error?}
@@ -71,28 +76,32 @@ function welcome(username) {
   }
 }
 
-/* ── 意图解析 → 工具列表（优先用后端关键词，兜底硬编码） ── */
-function resolveTools(text) {
+/* ── 意图解析 → Skill 匹配（优先后端 Skills，兜底硬编码工具关键词） ── */
+function resolveIntent(text) {
   const t = text.toLowerCase();
+  // 1. 先尝试匹配后端 Skill（YAML 配置的关键词）
+  if (skillList.value.length > 0) {
+    let best = null, bestScore = 0;
+    for (const skill of skillList.value) {
+      const score = (skill.keywords || []).filter(k => t.includes(k)).length;
+      if (score > bestScore) { bestScore = score; best = skill; }
+    }
+    if (best) {
+      return { mode: best.mode, tools: null, sub_agents: best.sub_agents };
+    }
+  }
+  // 2. 兜底：用工具关键词（兼容旧逻辑，无匹配时全跑）
   const meta = toolMetaMap.value;
-  // 如果有后端元数据，用后端关键词匹配
   const entries = Object.entries(meta);
   if (entries.length > 0) {
     const matched = [];
     for (const [name, info] of entries) {
-      const kw = info.keywords || [];
-      if (kw.some(k => t.includes(k))) matched.push(name);
+      if ((info.keywords || []).some(k => t.includes(k))) matched.push(name);
     }
-    if (matched.length > 0) return matched;
+    if (matched.length > 0) return { mode: "fast", tools: matched, sub_agents: null };
   }
-  // 兜底：旧硬编码逻辑
-  const has = (keywords) => keywords.some(k => t.includes(k));
-  if (has(['全面', '完整', '备战', '流程', '一条龙'])) return null;
-  const tools = [];
-  if (has(['匹配', '分析', '评分', '对比', '合适', '适合'])) tools.push('match_analyze');
-  if (has(['优化', '改进', '修改简历', '润色', '完善简历'])) tools.push('optimize_resume');
-  if (has(['面试', '题目', '考题', '问答', '提问'])) tools.push('generate_interview_questions');
-  return tools.length > 0 ? tools : null;
+  // 3. 最终兜底：全跑
+  return { mode: "coordinator", tools: null, sub_agents: ["resume_agent", "interview_agent"] };
 }
 
 /* ── 发送消息 ── */
@@ -105,13 +114,19 @@ function send() {
   addMessage({ role: "user", text });
   input.value = "";
 
-  const tools = resolveTools(text);
+  const intent = resolveIntent(text);
   const copilotMsg = { role: "copilot", steps: [], final: null, error: null };
   addMessage(copilotMsg);
   running.value = true;
 
   cancelFn.value = api.copilotApi.streamRun(
-    { goal: text, resume_id: Number(currentResume.id), job_id: Number(currentJob.id), tools },
+    {
+      goal: text,
+      resume_id: Number(currentResume.id),
+      job_id: Number(currentJob.id),
+      mode: intent.mode,
+      tools: intent.tools,
+    },
     {
       onStepStart(data) {
         const label = (toolMetaMap.value[data.tool] || {}).description || data.tool;

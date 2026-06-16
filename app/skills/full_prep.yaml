@@ -1,0 +1,14 @@
+# 全面备战 — 完整求职准备流程
+name: "全面备战"
+description: "完整面试准备：匹配分析 → 简历优化 → 面试题生成"
+keywords:
+  - "备战"
+  - "准备面试"
+  - "一条龙"
+  - "全面"
+  - "完整"
+  - "流程"
+mode: coordinator
+sub_agents:
+  - resume_agent
+  - interview_agent

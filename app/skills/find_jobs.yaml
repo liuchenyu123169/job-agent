@@ -1,0 +1,12 @@
+# 岗位推荐
+name: "岗位推荐"
+description: "基于简历对所有岗位打分，推荐最匹配的岗位"
+keywords:
+  - "推荐"
+  - "岗位推荐"
+  - "哪些岗位"
+  - "适合我"
+  - "找工作"
+mode: coordinator
+sub_agents:
+  - search_agent

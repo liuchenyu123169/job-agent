@@ -1,0 +1,13 @@
+# 匹配分析 — 只看匹配度
+name: "匹配分析"
+description: "分析简历与岗位的匹配度，给出分数和建议"
+keywords:
+  - "匹配"
+  - "分析"
+  - "评分"
+  - "对比"
+  - "合适"
+  - "适合"
+mode: coordinator
+sub_agents:
+  - resume_agent

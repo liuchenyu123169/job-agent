@@ -1,0 +1,12 @@
+# 面试题生成
+name: "面试题生成"
+description: "基于简历和岗位生成四类面试题，支持RAG知识库增强"
+keywords:
+  - "面试"
+  - "题目"
+  - "考题"
+  - "问答"
+  - "提问"
+mode: coordinator
+sub_agents:
+  - interview_agent
