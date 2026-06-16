@@ -27,10 +27,9 @@ cd frontend && npm install && npm run dev
   ↓ ChatPanel.send() → resolveIntent() 匹配 Skill
   ↓ POST /api/copilot/run {mode, goal, resume_id, job_id}
   ↓
-Copilot API — 三种模式:
-  fast       → 跳过LLM, 按 tools[] 顺序直跑
-  react      → 单ReAct Agent, 8个原子工具平铺
-  coordinator → Coordinator + 3子Agent 层次化委派
+Copilot API — 后端 Skill 匹配自动选择路径:
+  Skill命中 → 直接跑子Agent pipeline (零LLM路由)
+  Skill未命中 → Coordinator ReAct 推理委派
   ↓
 Skill 系统 (app/skills/) → YAML配置, 关键词匹配用户意图, 决定mode+sub_agents
   ↓
@@ -75,3 +74,11 @@ LLM / RAG / DB
 - 子Agent从Coordinator视角看就是ToolDefinition (`_wrap_sub_agent_tool()`)
 - 模板用 Jinja2 `{{ var }}` 语法, 不再用 `.format()`
 - 前端SSE解析在 api.js `streamCopilot()` (POST+fetch+ReadableStream)
+
+## 待实现功能
+
+1. **定制简历生成** — 用户输入个人信息(自由文本或已有简历) + 目标岗位JD → 生成完整优化简历。新增 `resume_generate.j2` 模板、`generate_resume_tool.py`、`custom_resume.yaml` Skill。
+
+2. **AI模拟面试** — 多轮对话：出题→用户回答→评估打分→追问→最终报告。新增 `mock_interview_session` 表、3个API端点、前端 `InterviewPanel.vue`。
+
+3. **Boss直聘爬虫+智能推荐** — httpx爬取真实岗位→存库→基于简历LLM推荐Top3。新增 `app/crawler/` 模块、`CrawlerPanel.vue`。
