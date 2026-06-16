@@ -16,6 +16,7 @@ class PipelineContext:
     # 用户选定的资源
     resume_id: int | None = None
     job_id: int | None = None
+    personal_info: str | None = None
 
     # 各步骤的执行结果（按工具名存储）
     tool_results: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -39,6 +40,7 @@ class PipelineContext:
         return {
             "resume_id": self.resume_id,
             "job_id": self.job_id,
+            "personal_info_length": len(self.personal_info or ""),
             "executed_tools": list(self.executed_tools),
             "task_ids": list(self.task_ids),
             "tool_results": dict(self.tool_results),

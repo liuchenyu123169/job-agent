@@ -66,6 +66,10 @@ def _summarize_step(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
         items = result.get("items") or []
         base["candidate_count"] = result.get("candidate_job_count", len(items))
         base["top_match_score"] = items[0]["match_score"] if items else None
+    elif tool_name == "generate_resume":
+        resume_text = result.get("generated_resume") or ""
+        base["resume_length"] = len(resume_text)
+        base["resume_preview"] = resume_text[:200]
     elif tool_name == "search_knowledge":
         base["hit_count"] = result.get("count", 0)
     elif tool_name in ("list_resumes", "list_jobs"):
@@ -92,6 +96,11 @@ def _step_text(tool_name: str, data: dict[str, Any]) -> str | None:
     if tool_name == "recommend_jobs":
         items = data.get("items") or []
         return f"推荐 {len(items)} 个岗位" if items else None
+    if tool_name == "generate_resume":
+        resume_text = data.get("generated_resume") or ""
+        lines = resume_text.strip().split("\n")
+        title_line = next((l.strip("# ").strip() for l in lines if l.strip()), "")
+        return f"简历已生成：{title_line[:80]}" if title_line else f"简历已生成（{len(resume_text)} 字符）"
     if tool_name == "search_knowledge":
         count = data.get("count", 0)
         return f"检索到 {count} 条知识" if count else None

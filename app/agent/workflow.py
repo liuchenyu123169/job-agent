@@ -539,6 +539,154 @@ def run_optimize_resume_workflow(resume_id: int, job_id: int, user_id: int) -> d
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+# 简历生成工作流 (generate_resume_graph)
+# ═══════════════════════════════════════════════════════════════
+
+def load_or_prepare_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
+    """加载已有简历，或使用用户输入的个人信息作为简历内容。
+
+    - 如果 resume_id > 0：从数据库加载简历
+    - 否则：使用 personal_info 字段构造成虚拟简历 dict
+    """
+    if state.get("error_msg"):
+        return {}
+
+    resume_id = state.get("resume_id", 0)
+    if resume_id and resume_id > 0:
+        resume = get_resume_by_id(resume_id, user_id=state["user_id"])
+        if resume is None:
+            return {"error_msg": "Resume not found"}
+        return {"resume": resume}
+
+    personal_info = state.get("personal_info") or ""
+    if not personal_info.strip():
+        return {"error_msg": "请提供简历 ID 或输入您的个人信息（技能/经历/项目/学历等）"}
+
+    return {"resume": {"content": personal_info.strip(), "file_name": "用户输入"}}
+
+
+def build_generate_resume_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
+    """构建简历生成 Prompt。"""
+    if state.get("error_msg"):
+        return {}
+
+    prompt = get_prompt_manager().render(
+        "resume_generate",
+        resume_content=state["resume"]["content"],
+        job_jd=state["job"]["jd_text"],
+    )
+    return {"prompt": prompt}
+
+
+def llm_generate_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
+    """调用 LLM 生成完整简历。"""
+    if state.get("error_msg"):
+        return {}
+
+    raw_output = invoke_llm(state["prompt"])
+    return {"raw_output": raw_output}
+
+
+def parse_generated_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
+    """解析生成的简历文本（简历生成输出纯文本/Markdown，非 JSON）。"""
+    if state.get("error_msg"):
+        return {}
+
+    raw_output = state["raw_output"] or ""
+    cleaned = raw_output.strip()
+    # 去除可能的 ```markdown 或 ``` 包裹
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+
+    return {"generated_resume": cleaned}
+
+
+def save_generate_resume_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
+    """保存简历生成任务记录。"""
+    if state.get("error_msg"):
+        return {}
+
+    task_id = save_success_task(
+        task_type="RESUME_GENERATE",
+        resume_id=state["resume_id"] if state.get("resume_id", 0) > 0 else None,
+        job_id=state["job_id"],
+        output_data={"generated_resume": state["generated_resume"]},
+        input_data={
+            "resume_id": state.get("resume_id"),
+            "job_id": state["job_id"],
+            "personal_info_used": not (state.get("resume_id", 0) > 0),
+            "personal_info_length": len(state.get("personal_info") or ""),
+            "local_job_id": (state.get("job") or {}).get("local_job_id"),
+        },
+        user_id=state["user_id"],
+    )
+    return {"task_id": task_id}
+
+
+def _route_after_resume_load(state: AgentAnalyzeState) -> str:
+    """简历加载后的路由：成功 → load_job，失败 → END。"""
+    if state.get("error_msg"):
+        return END
+    return "load_job"
+
+
+def _route_after_job_for_generate(state: AgentAnalyzeState) -> str:
+    """岗位加载后的路由：成功 → build_prompt，失败 → END。"""
+    if state.get("error_msg"):
+        return END
+    return "build_generate_resume_prompt"
+
+
+generate_resume_workflow = StateGraph(AgentAnalyzeState)
+generate_resume_workflow.add_node("load_or_prepare_resume", load_or_prepare_resume_node)
+generate_resume_workflow.add_node("load_job", load_job_node)
+generate_resume_workflow.add_node("build_generate_resume_prompt", build_generate_resume_prompt_node)
+generate_resume_workflow.add_node("llm_generate_resume", llm_generate_resume_node)
+generate_resume_workflow.add_node("parse_generated_resume", parse_generated_resume_node)
+generate_resume_workflow.add_node("save_generate_resume_task", save_generate_resume_task_node)
+generate_resume_workflow.add_edge(START, "load_or_prepare_resume")
+generate_resume_workflow.add_conditional_edges("load_or_prepare_resume", _route_after_resume_load, ["load_job", END])
+generate_resume_workflow.add_conditional_edges("load_job", _route_after_job_for_generate, ["build_generate_resume_prompt", END])
+generate_resume_workflow.add_edge("build_generate_resume_prompt", "llm_generate_resume")
+generate_resume_workflow.add_edge("llm_generate_resume", "parse_generated_resume")
+generate_resume_workflow.add_edge("parse_generated_resume", "save_generate_resume_task")
+generate_resume_workflow.add_edge("save_generate_resume_task", END)
+
+generate_resume_graph = generate_resume_workflow.compile()
+
+
+def run_generate_resume_workflow(
+    resume_id: int = 0,
+    job_id: int = 0,
+    user_id: int = 0,
+    personal_info: str = "",
+) -> dict[str, Any]:
+    """运行简历生成工作流。
+
+    Args:
+        resume_id: 已有简历 ID（> 0 时从 DB 加载，否则使用 personal_info）
+        job_id: 目标岗位 ID
+        user_id: 用户 ID
+        personal_info: 用户自由文本输入的个人信息（resume_id=0 时必填）
+
+    Returns:
+        {"task_id": int, "generated_resume": str, "error_msg": str | None}
+    """
+    initial_state = make_initial_state(user_id, resume_id, job_id, personal_info=personal_info)
+    final_state = generate_resume_graph.invoke(initial_state)
+    return {
+        "task_id": final_state.get("task_id"),
+        "generated_resume": final_state.get("generated_resume"),
+        "error_msg": final_state.get("error_msg"),
+    }
+
+
 def run_interview_questions_workflow(
     resume_id: int,
     job_id: int,

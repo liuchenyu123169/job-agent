@@ -59,7 +59,11 @@ async def copilot_run(
     - 未命中 → Coordinator LLM 推理委派
     """
     user_id = int(current_user["id"])
-    context = PipelineContext(resume_id=payload.resume_id, job_id=payload.job_id)
+    context = PipelineContext(
+        resume_id=payload.resume_id,
+        job_id=payload.job_id,
+        personal_info=payload.personal_info,
+    )
 
     session = create_copilot_session(goal=payload.goal, user_id=user_id)
     session_id = int(session["id"])
@@ -199,7 +203,12 @@ async def _direct_tools(
             yield step_start_event(tool_name, {"resume_id": rid, "job_id": jid})
             logger.info("[Copilot:tools] executing %s", tool_name)
 
-            result = await tool.execute(resume_id=int(rid or 0), job_id=int(jid or 0), user_id=user_id)
+            result = await tool.execute(
+                resume_id=int(rid or 0),
+                job_id=int(jid or 0),
+                user_id=user_id,
+                personal_info=context.personal_info or "",
+            )
             if result.success and result.data:
                 context.record_result(tool_name, result.data)
                 yield step_complete_event(tool_name, result.data)

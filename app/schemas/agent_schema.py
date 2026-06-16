@@ -68,8 +68,12 @@ class RecommendJobsResponse(BaseModel):
 class CopilotRunRequest(BaseModel):
     """Copilot Pipeline 执行请求。"""
     goal: str = Field(..., min_length=1, description="用户的目标描述，如'帮我全面备战字节跳动后端岗'")
-    resume_id: int | None = Field(default=None, description="简历 ID，如果知道的话")
-    job_id: int | None = Field(default=None, description="岗位 ID，如果知道的话")
+    resume_id: int | None = Field(default=None, description="简历 ID（全局 ID），如果知道的话")
+    job_id: int | None = Field(default=None, description="岗位 ID（全局 ID），如果知道的话")
+    personal_info: str | None = Field(
+        default=None,
+        description="自由文本输入的个人信息（技能/经历/项目/学历等）。无简历时使用此字段代替 resume_id。",
+    )
     tools: list[str] | None = Field(
         default=None,
         description="指定要执行的工具列表，如 ['match_analyze', 'optimize_resume']。不传默认全跑。",

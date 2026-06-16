@@ -6,6 +6,7 @@ class AgentAnalyzeState(TypedDict):
     resume_id: int
     job_id: int
     enable_rag: bool | None
+    personal_info: str | None
     resume: dict[str, Any] | None
     job: dict[str, Any] | None
     knowledge_context: str | None
@@ -19,6 +20,7 @@ class AgentAnalyzeState(TypedDict):
     analysis: dict[str, Any] | None
     optimization: dict[str, Any] | None
     interview_questions: dict[str, Any] | None
+    generated_resume: str | None
     task_id: int | None
     error_msg: str | None
 
@@ -30,6 +32,7 @@ def make_initial_state(user_id: int, resume_id: int, job_id: int, **overrides) -
         "resume_id": resume_id,
         "job_id": job_id,
         "enable_rag": None,
+        "personal_info": None,
         "resume": None,
         "job": None,
         "knowledge_context": None,
@@ -43,6 +46,7 @@ def make_initial_state(user_id: int, resume_id: int, job_id: int, **overrides) -
         "analysis": None,
         "optimization": None,
         "interview_questions": None,
+        "generated_resume": None,
         "task_id": None,
         "error_msg": None,
     }

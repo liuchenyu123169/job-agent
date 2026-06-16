@@ -71,12 +71,31 @@ function welcome(username) {
   }
 }
 
+/* ── 检测是否为简历生成意图（无简历时可免选简历） ── */
+const RESUME_GEN_KEYWORDS = ["生成简历", "定制简历", "写简历", "简历生成", "做简历", "制作简历", "生成一份简历", "写一份简历", "写个简历", "生成个简历", "做一份简历", "制作一份简历"];
+
+function isResumeGenIntent(text) {
+  const t = text.toLowerCase();
+  return RESUME_GEN_KEYWORDS.some(kw => t.includes(kw));
+}
+
 /* ── 发送消息 ── */
 function send() {
   const text = input.value.trim();
   if (!text || running.value) return;
-  if (!currentResume.id) { setMessage("请先在左侧「简历管理」中选择当前简历。", true); return; }
-  if (!currentJob.id) { setMessage("请先在左侧「岗位管理」中选择当前岗位。", true); return; }
+  if (!currentJob.id) { setMessage("请先在左侧「岗位管理」中选择目标岗位。", true); return; }
+
+  // 简历生成意图：允许无简历（用 personal_info 替代）
+  // 其他意图：必须有简历
+  const isGenResume = isResumeGenIntent(text);
+  if (!isGenResume && !currentResume.id) {
+    setMessage("请先在左侧「简历管理」中选择当前简历，或输入「生成简历」类指令以使用自由文本模式。", true);
+    return;
+  }
+  if (isGenResume && !currentResume.id && text.length < 20) {
+    setMessage("请在指令后补充您的个人信息（技能/经历/项目/学历等），例如：\n「帮我生成一份简历。我精通Python和Django，有3年后端开发经验...」", true);
+    return;
+  }
 
   addMessage({ role: "user", text });
   input.value = "";
@@ -85,9 +104,19 @@ function send() {
   addMessage(copilotMsg);
   running.value = true;
 
+  // 构建请求：有简历传 resume_id，无简历（且为生成简历意图）传 personal_info
+  const payload = {
+    goal: text,
+    job_id: Number(currentJob.id),
+  };
+  if (currentResume.id) {
+    payload.resume_id = Number(currentResume.id);
+  } else if (isGenResume) {
+    payload.personal_info = text;
+  }
+
   // 后端根据 Skill 自动匹配路由，前端只传 goal
-  cancelFn.value = api.copilotApi.streamRun(
-    { goal: text, resume_id: Number(currentResume.id), job_id: Number(currentJob.id) },
+  cancelFn.value = api.copilotApi.streamRun(payload,
     {
       onStepStart(data) {
         const label = (toolMetaMap.value[data.tool] || {}).description || data.tool;
@@ -187,6 +216,14 @@ defineExpose({ messages, welcome, send });
               <div v-if="step.summary.optimization.risk_points?.length" class="detail-item">
                 <h6>风险点</h6>
                 <ul><li v-for="r in step.summary.optimization.risk_points" :key="r">{{ r }}</li></ul>
+              </div>
+            </div>
+
+            <!-- 生成简历结果 -->
+            <div v-if="step.status === 'done' && step.summary?.generated_resume" class="step-detail">
+              <div class="detail-item">
+                <h6>📄 生成的简历</h6>
+                <div class="generated-resume-text" v-html="step.summary.generated_resume.replace(/\n/g, '<br>')"></div>
               </div>
             </div>
 
