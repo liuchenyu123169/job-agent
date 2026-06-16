@@ -79,18 +79,27 @@ function welcome(username) {
 /* ── 意图解析 → Skill 匹配（优先后端 Skills，兜底硬编码工具关键词） ── */
 function resolveIntent(text) {
   const t = text.toLowerCase();
-  // 1. 先尝试匹配后端 Skill（YAML 配置的关键词）
+  // 1. 匹配所有 Skill（支持多意图），合并 sub_agents 去重
   if (skillList.value.length > 0) {
-    let best = null, bestScore = 0;
+    const matched = [];
     for (const skill of skillList.value) {
       const score = (skill.keywords || []).filter(k => t.includes(k)).length;
-      if (score > bestScore) { bestScore = score; best = skill; }
+      if (score > 0) matched.push({ score, skill });
     }
-    if (best) {
-      return { mode: best.mode, tools: null, sub_agents: best.sub_agents };
+    if (matched.length > 0) {
+      matched.sort((a, b) => b.score - a.score);
+      // 合并所有 matched skill 的 sub_agents，去重保序
+      const agents = [];
+      const seen = new Set();
+      for (const { skill } of matched) {
+        for (const name of (skill.sub_agents || [])) {
+          if (!seen.has(name)) { seen.add(name); agents.push(name); }
+        }
+      }
+      return { mode: "coordinator", tools: null, sub_agents: agents };
     }
   }
-  // 2. 兜底：用工具关键词（兼容旧逻辑，无匹配时全跑）
+  // 2. 兜底：用工具关键词匹配（fast 模式）
   const meta = toolMetaMap.value;
   const entries = Object.entries(meta);
   if (entries.length > 0) {
@@ -100,7 +109,7 @@ function resolveIntent(text) {
     }
     if (matched.length > 0) return { mode: "fast", tools: matched, sub_agents: null };
   }
-  // 3. 最终兜底：全跑
+  // 3. 最终兜底：Coordinator 全跑
   return { mode: "coordinator", tools: null, sub_agents: ["resume_agent", "interview_agent"] };
 }
 

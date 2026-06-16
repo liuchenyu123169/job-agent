@@ -98,7 +98,7 @@ class SkillRegistry:
                 logger.info("SkillRegistry 已加载: '%s' (%d 关键词)", skill.name, len(skill.keywords))
 
     def match(self, text: str, min_score: int = 1) -> Skill | None:
-        """根据用户输入文本匹配最合适的 Skill。
+        """根据用户输入文本匹配最合适的 Skill（单意图场景）。
 
         Args:
             text: 用户输入（如 "帮我全面备战这个岗位"）
@@ -106,6 +106,7 @@ class SkillRegistry:
 
         Returns:
             匹配分数最高的 Skill，无匹配时返回 None。
+            多意图场景请使用 match_all()。
         """
         best_skill: Skill | None = None
         best_score = min_score - 1
@@ -115,6 +116,22 @@ class SkillRegistry:
                 best_score = score
                 best_skill = skill
         return best_skill
+
+    def match_all(self, text: str, min_score: int = 1) -> list[Skill]:
+        """返回所有匹配的 Skill，按分数降序（多意图场景）。
+
+        用法：
+            skills = registry.match_all("分析匹配度，顺便推荐岗位")
+            → [match_analyze, find_jobs]
+            合并所有 skill 的 sub_agents 后交给 Coordinator 统一调度。
+        """
+        scored: list[tuple[int, Skill]] = []
+        for skill in self._skills:
+            score = skill.match_score(text)
+            if score >= min_score:
+                scored.append((score, skill))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [s for _, s in scored]
 
     def list_all(self) -> list[Skill]:
         """返回所有已加载的 Skill。"""
