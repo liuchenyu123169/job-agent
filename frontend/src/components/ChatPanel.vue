@@ -8,21 +8,16 @@ const currentResume = inject("currentResume");
 const currentJob = inject("currentJob");
 const fetchTasks = inject("fetchTasks");
 
-/* ── 工具元数据 + Skill 列表（从后端动态加载） ── */
+/* ── 工具元数据（用于步骤卡片的中文标签） ── */
 const toolMetaMap = ref({});     // { name: { description, keywords, render_type } }
-const skillList = ref([]);       // [{ name, description, keywords, mode, sub_agents, tools }]
 
 async function loadMeta() {
   try {
-    const [tools, skills] = await Promise.all([
-      api.copilotApi.listTools(),
-      api.copilotApi.listSkills(),
-    ]);
+    const tools = await api.copilotApi.listTools();
     const map = {};
     for (const t of tools) map[t.name] = t;
     toolMetaMap.value = map;
-    skillList.value = skills;
-  } catch { /* 静默降级：用硬编码兜底 */ }
+  } catch { /* 静默降级 */ }
 }
 
 loadMeta();
@@ -76,43 +71,6 @@ function welcome(username) {
   }
 }
 
-/* ── 意图解析 → Skill 匹配（优先后端 Skills，兜底硬编码工具关键词） ── */
-function resolveIntent(text) {
-  const t = text.toLowerCase();
-  // 1. 匹配所有 Skill（支持多意图），合并 sub_agents 去重
-  if (skillList.value.length > 0) {
-    const matched = [];
-    for (const skill of skillList.value) {
-      const score = (skill.keywords || []).filter(k => t.includes(k)).length;
-      if (score > 0) matched.push({ score, skill });
-    }
-    if (matched.length > 0) {
-      matched.sort((a, b) => b.score - a.score);
-      // 合并所有 matched skill 的 sub_agents，去重保序
-      const agents = [];
-      const seen = new Set();
-      for (const { skill } of matched) {
-        for (const name of (skill.sub_agents || [])) {
-          if (!seen.has(name)) { seen.add(name); agents.push(name); }
-        }
-      }
-      return { mode: "coordinator", tools: null, sub_agents: agents };
-    }
-  }
-  // 2. 兜底：用工具关键词匹配（fast 模式）
-  const meta = toolMetaMap.value;
-  const entries = Object.entries(meta);
-  if (entries.length > 0) {
-    const matched = [];
-    for (const [name, info] of entries) {
-      if ((info.keywords || []).some(k => t.includes(k))) matched.push(name);
-    }
-    if (matched.length > 0) return { mode: "fast", tools: matched, sub_agents: null };
-  }
-  // 3. 最终兜底：Coordinator 全跑
-  return { mode: "coordinator", tools: null, sub_agents: ["resume_agent", "interview_agent"] };
-}
-
 /* ── 发送消息 ── */
 function send() {
   const text = input.value.trim();
@@ -123,19 +81,13 @@ function send() {
   addMessage({ role: "user", text });
   input.value = "";
 
-  const intent = resolveIntent(text);
   const copilotMsg = { role: "copilot", steps: [], final: null, error: null };
   addMessage(copilotMsg);
   running.value = true;
 
+  // 后端根据 Skill 自动匹配路由，前端只传 goal
   cancelFn.value = api.copilotApi.streamRun(
-    {
-      goal: text,
-      resume_id: Number(currentResume.id),
-      job_id: Number(currentJob.id),
-      mode: intent.mode,
-      tools: intent.tools,
-    },
+    { goal: text, resume_id: Number(currentResume.id), job_id: Number(currentJob.id) },
     {
       onStepStart(data) {
         const label = (toolMetaMap.value[data.tool] || {}).description || data.tool;
