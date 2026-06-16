@@ -82,12 +82,9 @@ class PromptManager:
                 f"模板 '{template_name}.j2' 渲染失败：缺少变量或变量名拼写错误 — {exc}"
             ) from exc
 
-    def list_templates(self) -> list[str]:
-        """列出当前版本的所有模板名（不含 .j2 后缀）。"""
-        search_dir = PROMPTS_BASE / self.version
-        return sorted(
-            [f.stem for f in search_dir.glob("*.j2")]
-        )
+    def set_few_shot_store(self, store) -> None:
+        """运行时注入 FewShotStore，启用 few-shot 功能。"""
+        self.few_shot_store = store
 
     @property
     def template_dir(self) -> Path:

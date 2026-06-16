@@ -2,93 +2,76 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 启动命令
+## 启动
 
 ```bash
 # 后端 (http://127.0.0.1:8000)
+cp .env.example .env   # 填入 ZHIPU_API_KEY
 pip install -r requirements.txt
-cp .env.example .env   # 编辑填入 ZHIPU_API_KEY
 python -m uvicorn app.main:app --reload --port 8000
 
 # 前端 (http://127.0.0.1:5173)
-cd frontend
-npm install
-npm run dev            # 开发服务器（热更新）
-npm run build          # 生产构建到 dist/
+cd frontend && npm install && npm run dev
 ```
 
 ## 技术栈
 
-- **后端**: FastAPI + LangGraph + LangChain + SQLite + ChromaDB + JWT (python-jose)
-- **前端**: Vue 3 (单页 SPA, Vite 构建, `frontend/src/`)
-- **LLM**: 智谱 GLM (`glm-4-flash`) 通过 LangChain `ChatOpenAI` 兼容接口
-- **Embedding**: 智谱 Embedding API, 存入 ChromaDB 向量库
+- **后端**: FastAPI + LangGraph + LangChain + SQLite + ChromaDB + JWT + Jinja2 + PyYAML
+- **前端**: Vue 3 (SPA, Vite, `frontend/src/components/` 7个SFC)
+- **LLM**: 智谱 GLM (`glm-4-flash`) 通过 LangChain `ChatOpenAI`
 
-## 架构分层
+## 架构分层（从上到下）
 
 ```
-前端 ChatPanel (Vue SSE 流)
-    ↓ POST /api/copilot/run
-Copilot API — 两种模式:
-  - 直通模式 (有 resume_id+job_id): 跳过 LLM Planner, 按 tools[] 列表顺序执行
-  - ReAct 模式 (缺 ID): LangGraph agent 自主决策工具调用链
-    ↓
-Tool Registry (全局单例) → 8 个注册工具
-    ↓
-Agent Workflow (LangGraph StateGraph) — 每条 workflow 编译为独立 graph
-    ↓
-LLM / RAG / DB — 底层能力
+用户输入
+  ↓ ChatPanel.send() → resolveIntent() 匹配 Skill
+  ↓ POST /api/copilot/run {mode, goal, resume_id, job_id}
+  ↓
+Copilot API — 三种模式:
+  fast       → 跳过LLM, 按 tools[] 顺序直跑
+  react      → 单ReAct Agent, 8个原子工具平铺
+  coordinator → Coordinator + 3子Agent 层次化委派
+  ↓
+Skill 系统 (app/skills/) → YAML配置, 关键词匹配用户意图, 决定mode+sub_agents
+  ↓
+Coordinator (ReAct) → 委派子Agent(也是ToolDefinition)
+  ↓ 子Agent内部是 LangGraph pipeline (复用 workflow.py 节点)
+  ↓
+LLM调用前: PromptManager.render() → Jinja2模板 + FewShot注入
+  ↓
+LLM / RAG / DB
 ```
 
-## 关键文件（按阅读顺序）
+## 关键模块
 
-| 文件 | 角色 |
-|------|------|
-| `app/main.py` | FastAPI app, CORS, 注册 7 个路由, startup 事件 |
-| `app/core/config.py` | 环境变量: ZHIPU_BASE_URL, MODEL_NAME, JWT_SECRET_KEY |
-| `app/core/llm.py` | `invoke_llm(prompt)` 纯文本 / `invoke_llm_with_tools(messages, tools)` 带 function calling |
-| `app/tools/base.py` | `ToolDefinition` (name, description, parameters, execute, keywords, render_type) + `ToolResult` dataclass |
-| `app/tools/registry.py` | `ToolRegistry` 全局单例, `tool_registry.list_all()` / `get_function_definitions()` |
-| `app/tools/__init__.py` | 所有工具 import 触发注册, 新增工具在这里加一行 |
-| `app/agent/workflow.py` | 3 个 LangGraph StateGraph: 匹配分析/简历优化/面试题生成, 每个编译为独立 graph + `run_*_workflow()` 入口 |
-| `app/agent/common.py` | 共享: `read_prompt_template()`, `save_success_task()`, `normalize_match_score()`, `ensure_string_list()` |
-| `app/agent/state.py` | `AgentAnalyzeState(TypedDict)` — 20 字段, 三个 workflow 共用 |
-| `app/agent/recommend.py` | `recommend_jobs_for_resume()` — 逐岗位 LLM 打分排序 |
-| `app/copilot/graph.py` | ReAct agent 循环: agent_node → router → tools_node → 回 agent_node |
-| `app/copilot/state.py` | `PipelineContext` (累积工具结果) + `PipelineState` |
-| `app/copilot/system_prompt.py` | `build_system_prompt()` 从 tool_registry 动态生成系统提示词 |
-| `app/copilot/summarizer.py` | `summarize_result()` — 单次遍历生成结构化报告 + 文本摘要 |
-| `app/api/copilot_api.py` | `POST /api/copilot/run` (SSE 流) + `GET /api/copilot/tools` (工具发现) + sessions CRUD |
-| `app/api/agent_api.py` | 独立 REST 端点: `/analyze`, `/optimize-resume`, `/generate-interview-questions`, `/recommend-jobs` |
-| `app/db/database.py` | SQLite 初始化 (5 表: user, resume, job, agent_task, copilot_session) |
-| `app/rag/` | RAG 链路: loader → cleaner → splitter → embedding → vector_store (ChromaDB) |
-| `app/prompts/` | LLM 提示词模板 (.txt): `match_analyze.txt`, `resume_optimize.txt`, `interview_questions.txt` |
-| `frontend/src/App.vue` | 根组件 (~250 行): 侧边栏 + 面板路由 + provide 全局状态, CSS 全局样式 |
-| `frontend/src/components/` | 7 个 SFC: AuthForm, ChatPanel, ResumePanel, JobPanel, RecommendPanel, TaskPanel, KnowledgePanel |
-| `frontend/src/api.js` | Axios 客户端 + SSE 流解析 + 所有 API 方法 |
+| 模块 | 路径 | 作用 |
+|------|------|------|
+| Prompt引擎 | `app/prompt_engine/` | PromptManager(Jinja2加载/渲染/版本切换) + FewShotStore(YAML示例库) + PromptEvaluator(AB对比) |
+| 多Agent | `app/agents/` | Coordinator(ReAct调度者) + ResumeAgent + InterviewAgent + SearchAgent |
+| Skill系统 | `app/skills/` | SkillRegistry(YAML加载/关键词匹配) + 4个skill配置 |
+| 工具层 | `app/tools/` | ToolDefinition + ToolRegistry全局单例, 8个工具 |
+| Workflow | `app/agent/workflow.py` | 3个LangGraph StateGraph + run_*_workflow() |
+| Copilot | `app/copilot/` | ReAct graph + PipelineContext + summarizer + system_prompt |
+| RAG | `app/rag/` | loader→cleaner→splitter→embedding→ChromaDB |
+| 数据库 | `app/db/` | SQLite 5表: user/resume/job/agent_task/copilot_session |
 
-## 新增工具的标准流程
+## 新增功能的标准流程
 
-1. 写 prompt 模板 → `app/prompts/xxx.txt`
-2. 写 workflow → `app/agent/workflow.py` 新增 StateGraph + `run_xxx_workflow()`
-3. 写 tool 封装 → `app/tools/xxx_tool.py` (定义 ToolDefinition, 含 keywords + render_type)
-4. 注册 → `app/tools/__init__.py` 加 `import app.tools.xxx_tool`
-5. (可选) 独立 REST 端点 → `app/api/agent_api.py`
-6. 前端渲染 → 若 render_type 已存在则自动渲染; 新类型需在 ChatPanel 加一个 `v-if` 块
+1. 写 Jinja2 模板 → `app/prompts/v1/xxx.j2`
+2. (可选) 写 few-shot → `app/prompts/few_shots/xxx.yaml`
+3. (可选) 写测试用例 → `app/prompts/eval_cases/xxx.yaml`
+4. 写 workflow → `app/agent/workflow.py` 加 StateGraph + run函数
+5. 写 tool → `app/tools/xxx_tool.py` (ToolDefinition + keywords + render_type)
+6. 注册 → `app/tools/__init__.py` 加 import
+7. 如需Skill编排 → `app/skills/xxx.yaml`
 
-注册后, system prompt、`/api/copilot/tools`、LLM function definitions 全部自动感知新工具。`render_type` 决定前端如何展示:
-- `match_analysis` — 分数 + 优势/劣势/建议列表
-- `questions` — 四类面试题分组
-- `scored_list` — 按分数排序的卡片列表
-- `item_list` — 通用条目列表
-- `full_text` — 大段文本
-- `generic` — 纯 JSON dump
+注册后 system_prompt、`/api/copilot/tools`、`/api/copilot/skills` 全部自动感知。
 
 ## 重要约定
 
-- 前端组件之间用 Vue `provide`/`inject` 共享状态 (App.vue provide, 子组件 inject)
-- 所有 tool 的 execute 函数必须 `async`, 返回 `ToolResult`
-- 所有 workflow 使用统一 `AgentAnalyzeState` TypedDict, 初始状态包含 20 个字段全部赋 None
-- 任务结果通过 `save_success_task()` 持久化到 `agent_task` 表
-- Copilot 对话上下文通过 `copilot_session` 表持久化 (JSON 列)
-- 前端 SSE 解析在 `api.js` 的 `streamCopilot()` (POST + fetch + ReadableStream, 非 EventSource)
+- 前端组件用 Vue `provide`/`inject` 共享状态
+- 所有 Tool.execute 必须 async, 返回 ToolResult
+- 所有 workflow 共用 `AgentAnalyzeState` TypedDict (20字段)
+- 子Agent从Coordinator视角看就是ToolDefinition (`_wrap_sub_agent_tool()`)
+- 模板用 Jinja2 `{{ var }}` 语法, 不再用 `.format()`
+- 前端SSE解析在 api.js `streamCopilot()` (POST+fetch+ReadableStream)

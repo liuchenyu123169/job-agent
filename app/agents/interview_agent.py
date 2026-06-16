@@ -18,11 +18,11 @@ from app.agent.workflow import (
     build_interview_questions_prompt_node,
     load_job_node,
     load_resume_node,
+    llm_generate_questions_node,
     parse_questions_node,
     retrieve_knowledge_node,
+    save_questions_task_node,
 )
-from app.agent.common import save_success_task
-from app.core.llm import invoke_llm
 
 logger = logging.getLogger(__name__)
 
@@ -35,36 +35,6 @@ INTERVIEW_AGENT_SYSTEM_PROMPT = """\
 
 请直接按顺序执行，生成具体、可追问的技术面试题，避免泛泛而谈。
 """
-
-
-def _generate_questions_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    """LLM 生成面试题节点。"""
-    if state.get("error_msg"):
-        return {}
-    logger.info("[InterviewAgent] LLM 生成面试题")
-    raw_output = invoke_llm(state["prompt"])
-    return {"raw_output": raw_output}
-
-
-def _save_interview_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    """保存面试题生成任务记录。"""
-    if state.get("error_msg"):
-        return {}
-    task_id = save_success_task(
-        task_type="INTERVIEW_QUESTIONS",
-        resume_id=state["resume_id"],
-        job_id=state["job_id"],
-        output_data=state["interview_questions"],
-        input_data={
-            "resume_id": state["resume_id"],
-            "job_id": state["job_id"],
-            "enable_rag": True,
-            "knowledge_used": bool(state.get("knowledge_used")),
-            "knowledge_count": state.get("knowledge_count") or 0,
-        },
-        user_id=state["user_id"],
-    )
-    return {"task_id": task_id}
 
 
 def _route_after_load(state: AgentAnalyzeState) -> str:
@@ -90,9 +60,9 @@ class InterviewAgent(SubAgent):
         wf.add_node("load_job", load_job_node)
         wf.add_node("retrieve_knowledge", retrieve_knowledge_node)
         wf.add_node("build_prompt", build_interview_questions_prompt_node)
-        wf.add_node("llm_generate", _generate_questions_node)
+        wf.add_node("llm_generate", llm_generate_questions_node)
         wf.add_node("parse_questions", parse_questions_node)
-        wf.add_node("save_task", _save_interview_task_node)
+        wf.add_node("save_task", save_questions_task_node)
 
         wf.add_edge(START, "load_resume")
         wf.add_conditional_edges("load_resume", _route_after_load, {"retrieve_knowledge": "load_job", END: END})

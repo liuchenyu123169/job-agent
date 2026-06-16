@@ -19,23 +19,6 @@ def get_prompt_manager() -> PromptManager:
     return _prompt_manager
 
 
-def read_prompt_template(prompt_file_name: str) -> str:
-    """【已弃用】请用 get_prompt_manager().render() 替代。
-
-    保留此函数以兼容旧代码，内部已委托给 PromptManager。
-    """
-    # 从文件名提取模板名（去掉 .txt / .j2 后缀，去掉 _ 转 - 等）
-    template_name = prompt_file_name.rsplit(".", 1)[0]
-    # 兼容旧的 .txt 文件名映射到 .j2 模板
-    mapping = {
-        "match_analyze": "match_analyze",
-        "resume_optimize": "resume_optimize",
-        "interview_questions": "interview_questions",
-    }
-    name = mapping.get(template_name, template_name)
-    return _prompt_manager.render(name)
-
-
 def _clean_llm_json_output(text: str) -> str:
     cleaned = text.strip()
 

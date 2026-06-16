@@ -100,22 +100,11 @@ class SkillRegistry:
     def match(self, text: str, min_score: int = 1) -> Skill | None:
         """根据用户输入文本匹配最合适的 Skill（单意图场景）。
 
-        Args:
-            text: 用户输入（如 "帮我全面备战这个岗位"）
-            min_score: 最低匹配分数（至少命中 1 个关键词）
-
-        Returns:
-            匹配分数最高的 Skill，无匹配时返回 None。
-            多意图场景请使用 match_all()。
+        内部委托给 match_all()，取第一个结果。
+        多意图场景请直接使用 match_all()。
         """
-        best_skill: Skill | None = None
-        best_score = min_score - 1
-        for skill in self._skills:
-            score = skill.match_score(text)
-            if score > best_score:
-                best_score = score
-                best_skill = skill
-        return best_skill
+        matched = self.match_all(text, min_score)
+        return matched[0] if matched else None
 
     def match_all(self, text: str, min_score: int = 1) -> list[Skill]:
         """返回所有匹配的 Skill，按分数降序（多意图场景）。

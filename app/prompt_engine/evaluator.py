@@ -12,7 +12,6 @@
     print(report)
 """
 
-import json
 import logging
 import re
 import time
@@ -111,7 +110,9 @@ class PromptEvaluator:
         try:
             prompt = self.pm.render(template_name, scene=scene, **case.get("variables", {}))
             raw = invoke_llm(prompt)
-            output = self._try_parse_json(raw)
+            # 延迟导入避免循环依赖 (common → prompt_engine, evaluator → common)
+            from app.agent.common import parse_llm_json_output
+            output = parse_llm_json_output(raw)
             result.output = output
         except Exception as exc:
             errors.append(f"LLM 调用失败: {exc}")
@@ -235,21 +236,6 @@ class PromptEvaluator:
         return "\n".join(lines)
 
     # ── 辅助 ──
-
-    @staticmethod
-    def _try_parse_json(raw: str) -> dict[str, Any]:
-        """尝试解析 LLM 的 JSON 输出。"""
-        text = raw.strip()
-        if text.startswith("```json"):
-            text = text[len("```json"):]
-        elif text.startswith("```"):
-            text = text[len("```"):]
-        if text.endswith("```"):
-            text = text[:-3]
-        try:
-            return json.loads(text.strip())
-        except json.JSONDecodeError:
-            return {"raw_output": raw}
 
     @staticmethod
     def _summary_score(result: EvalResult) -> float:

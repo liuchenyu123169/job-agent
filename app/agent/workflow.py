@@ -7,7 +7,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.common import analyze_resume_job, get_prompt_manager, parse_llm_json_output, save_success_task
-from app.agent.state import AgentAnalyzeState
+from app.agent.state import AgentAnalyzeState, make_initial_state
 from app.core.llm import invoke_llm
 from app.db.crud import get_job_by_id, get_resume_by_id
 from app.rag.rag_service import search_knowledge
@@ -520,27 +520,7 @@ interview_graph = interview_workflow.compile()
 
 
 def run_analyze_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str, Any]:
-    initial_state: AgentAnalyzeState = {
-        "user_id": user_id,
-        "resume_id": resume_id,
-        "job_id": job_id,
-        "enable_rag": None,
-        "resume": None,
-        "job": None,
-        "knowledge_context": None,
-        "knowledge_used": None,
-        "knowledge_count": None,
-        "rag_queries": None,
-        "rag_hit_titles": None,
-        "rag_hit_sources": None,
-        "prompt": None,
-        "raw_output": None,
-        "analysis": None,
-        "optimization": None,
-        "interview_questions": None,
-        "task_id": None,
-        "error_msg": None,
-    }
+    initial_state = make_initial_state(user_id, resume_id, job_id)
     final_state = analyze_graph.invoke(initial_state)
     return {
         "task_id": final_state.get("task_id"),
@@ -550,27 +530,7 @@ def run_analyze_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str,
 
 
 def run_optimize_resume_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str, Any]:
-    initial_state: AgentAnalyzeState = {
-        "user_id": user_id,
-        "resume_id": resume_id,
-        "job_id": job_id,
-        "enable_rag": None,
-        "resume": None,
-        "job": None,
-        "knowledge_context": None,
-        "knowledge_used": None,
-        "knowledge_count": None,
-        "rag_queries": None,
-        "rag_hit_titles": None,
-        "rag_hit_sources": None,
-        "prompt": None,
-        "raw_output": None,
-        "analysis": None,
-        "optimization": None,
-        "interview_questions": None,
-        "task_id": None,
-        "error_msg": None,
-    }
+    initial_state = make_initial_state(user_id, resume_id, job_id)
     final_state = optimize_resume_graph.invoke(initial_state)
     return {
         "task_id": final_state.get("task_id"),
@@ -585,27 +545,7 @@ def run_interview_questions_workflow(
     user_id: int,
     enable_rag: bool = True,
 ) -> dict[str, Any]:
-    initial_state: AgentAnalyzeState = {
-        "user_id": user_id,
-        "resume_id": resume_id,
-        "job_id": job_id,
-        "enable_rag": enable_rag,
-        "resume": None,
-        "job": None,
-        "knowledge_context": None,
-        "knowledge_used": None,
-        "knowledge_count": None,
-        "rag_queries": None,
-        "rag_hit_titles": None,
-        "rag_hit_sources": None,
-        "prompt": None,
-        "raw_output": None,
-        "analysis": None,
-        "optimization": None,
-        "interview_questions": None,
-        "task_id": None,
-        "error_msg": None,
-    }
+    initial_state = make_initial_state(user_id, resume_id, job_id, enable_rag=enable_rag)
     final_state = interview_graph.invoke(initial_state)
     return {
         "task_id": final_state.get("task_id"),

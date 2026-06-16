@@ -14,9 +14,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.state import AgentAnalyzeState
-from app.db.crud import get_job_by_id, get_resume_by_id
-from app.tools.registry import tool_registry
+from app.agent.state import AgentAnalyzeState, make_initial_state
 
 logger = logging.getLogger(__name__)
 
@@ -81,28 +79,7 @@ class SubAgent(ABC):
         """
         logger.info("[%s] 开始执行: goal=%s resume_id=%s job_id=%s", self.name, goal, resume_id, job_id)
 
-        # 构建初始状态（复用现有 AgentAnalyzeState，确保节点函数兼容）
-        initial: AgentAnalyzeState = {
-            "user_id": user_id,
-            "resume_id": resume_id,
-            "job_id": job_id,
-            "enable_rag": None,
-            "resume": None,
-            "job": None,
-            "knowledge_context": None,
-            "knowledge_used": None,
-            "knowledge_count": None,
-            "rag_queries": None,
-            "rag_hit_titles": None,
-            "rag_hit_sources": None,
-            "prompt": None,
-            "raw_output": None,
-            "analysis": None,
-            "optimization": None,
-            "interview_questions": None,
-            "task_id": None,
-            "error_msg": None,
-        }
+        initial = make_initial_state(user_id, resume_id, job_id)
 
         try:
             final_state = self._graph.invoke(initial)
@@ -128,26 +105,3 @@ class SubAgent(ABC):
             logger.exception("[%s] 执行异常: %s", self.name, exc)
             return {"success": False, "data": None, "error": str(exc)}
 
-    # ── 辅助 ──
-
-    def _get_tool(self, name: str):
-        """从 tool_registry 获取工具，不存在则抛异常。"""
-        tool = tool_registry.get(name)
-        if tool is None:
-            raise ValueError(f"工具 '{name}' 未注册，{self.name} 的 tools 列表配置有误")
-        return tool
-
-    async def _execute_tool(self, tool_name: str, resume_id: int, job_id: int, user_id: int, **extra) -> dict:
-        """执行单个工具并返回 {success, data, error}。"""
-        tool = self._get_tool(tool_name)
-        try:
-            result = await tool.execute(
-                resume_id=resume_id,
-                job_id=job_id,
-                user_id=user_id,
-                **extra,
-            )
-            return {"success": result.success, "data": result.data, "error": result.error}
-        except Exception as exc:
-            logger.error("[%s] 工具 %s 执行异常: %s", self.name, tool_name, exc)
-            return {"success": False, "data": None, "error": str(exc)}

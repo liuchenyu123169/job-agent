@@ -82,11 +82,6 @@ class FewShotStore:
         """列出所有已加载的场景标签。"""
         return sorted(self._cache.keys())
 
-    def reload(self) -> None:
-        """热重载：重新读取文件系统。"""
-        logger.info("FewShotStore 热重载中...")
-        self._load_all()
-
     def add(self, scene: str, example: dict[str, Any]) -> None:
         """运行时添加一条示例（不立即写盘）。"""
         if "input" not in example or "output" not in example:
