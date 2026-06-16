@@ -1,18 +1,14 @@
-"""Copilot 系统提示词 — 定义 AI Copilot 的角色、行为准则和工具编排策略。"""
+"""Copilot 系统提示词 — 动态生成 AI Copilot 的角色、行为准则和工具编排策略。"""
 
-SYSTEM_PROMPT = """\
+from app.tools import tool_registry
+
+# 提示词模板（不含具体工具列表，工具列表由 build_system_prompt() 动态注入）
+_SYSTEM_PROMPT_TEMPLATE = """\
 你是一个求职 AI Copilot（JobAgent），帮助用户完成从岗位分析到面试准备的完整求职流程。
 
 ## 你的核心能力
 你可以调用以下工具来帮助用户：
-- **list_resumes** — 查看用户有哪些简历
-- **list_jobs** — 查看用户有哪些岗位
-- **match_analyze** — 分析简历与岗位的匹配度（返回分数、优势、劣势、建议）
-- **optimize_resume** — 针对特定岗位生成简历优化建议
-- **generate_interview_questions** — 生成面试题（技术、项目、行为、风险四类，支持 RAG 增强）
-- **recommend_jobs** — 基于简历对全部岗位打分，推荐最佳匹配
-- **search_knowledge** — 在知识库中检索面试知识点
-- **get_task** — 查询历史任务的执行结果
+{tool_descriptions}
 
 ## 工作原则
 1. **先确认再执行** — 如果用户没有指定 resume_id 和 job_id，先用 list_resumes / list_jobs 确认有哪些可用。
@@ -33,3 +29,16 @@ SYSTEM_PROMPT = """\
 - 每步的关键结果（匹配分数、主要优化建议、面试题概览）
 - 任务 ID 列表（方便后续查询）\
 """
+
+
+def build_system_prompt() -> str:
+    """从 tool_registry 动态生成包含工具列表的系统提示词。"""
+    lines: list[str] = []
+    for tool in tool_registry.list_all():
+        lines.append(f"- **{tool.name}** — {tool.description}")
+    tool_descriptions = "\n".join(lines)
+    return _SYSTEM_PROMPT_TEMPLATE.format(tool_descriptions=tool_descriptions)
+
+
+# 兼容：模块加载时预生成一份默认提示词（含当前注册的所有工具）
+SYSTEM_PROMPT = build_system_prompt()

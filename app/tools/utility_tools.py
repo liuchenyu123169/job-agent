@@ -125,6 +125,8 @@ search_knowledge_tool = ToolDefinition(
     description="在 RAG 知识库中检索面试相关知识片段，可用于查找特定技术栈的面试题或知识点。",
     parameters=SEARCH_KNOWLEDGE_PARAMETERS,
     execute=search_knowledge_execute,
+    keywords=["检索", "搜索", "查", "知识点"],
+    render_type="item_list",
 )
 
 list_resumes_tool = ToolDefinition(
@@ -132,6 +134,8 @@ list_resumes_tool = ToolDefinition(
     description="列出当前用户上传的所有简历，当需要确认有哪些简历可用时调用。",
     parameters=LIST_RESUMES_PARAMETERS,
     execute=list_resumes_execute,
+    keywords=["简历列表", "我的简历"],
+    render_type="item_list",
 )
 
 list_jobs_tool = ToolDefinition(
@@ -139,6 +143,8 @@ list_jobs_tool = ToolDefinition(
     description="列出当前用户创建的所有岗位描述，当需要确认有哪些岗位可分析时调用。",
     parameters=LIST_JOBS_PARAMETERS,
     execute=list_jobs_execute,
+    keywords=["岗位列表", "我的岗位"],
+    render_type="item_list",
 )
 
 get_task_tool = ToolDefinition(
@@ -146,6 +152,8 @@ get_task_tool = ToolDefinition(
     description="根据任务 ID 查询任务的执行结果，用于查看历史分析任务的详细信息。",
     parameters=GET_TASK_PARAMETERS,
     execute=get_task_execute,
+    keywords=["任务", "查询任务", "历史"],
+    render_type="generic",
 )
 
 tool_registry.register(search_knowledge_tool)

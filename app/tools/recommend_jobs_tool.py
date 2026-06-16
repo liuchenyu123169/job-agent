@@ -73,6 +73,8 @@ recommend_jobs_tool = ToolDefinition(
     ),
     parameters=RECOMMEND_JOBS_PARAMETERS,
     execute=recommend_jobs_execute,
+    keywords=["推荐", "岗位推荐", "适合", "哪些岗位"],
+    render_type="scored_list",
 )
 
 tool_registry.register(recommend_jobs_tool)

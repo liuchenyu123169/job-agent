@@ -181,6 +181,22 @@ export const taskApi = {
 
 // ── Copilot SSE 流式调用 ──
 
+function _parseSSELines(lines, callbacks) {
+  let currentEvent = "";
+  for (const line of lines) {
+    if (line.startsWith("event: ")) {
+      currentEvent = line.slice(7).trim();
+    } else if (line.startsWith("data: ")) {
+      try {
+        _dispatchCopilotEvent(currentEvent, JSON.parse(line.slice(6)), callbacks);
+      } catch {
+        // 跳过无法解析的 JSON
+      }
+      currentEvent = "";
+    }
+  }
+}
+
 export function streamCopilot(payload, callbacks) {
   const token = localStorage.getItem("token");
   if (!token) {
@@ -215,15 +231,7 @@ export function streamCopilot(payload, callbacks) {
         if (done) {
           // 流结束，flush 缓冲区残留数据
           if (buffer.trim()) {
-            const lines = buffer.split("\n");
-            let currentEvent = "";
-            for (const line of lines) {
-              if (line.startsWith("event: ")) currentEvent = line.slice(7).trim();
-              else if (line.startsWith("data: ")) {
-                try { _dispatchCopilotEvent(currentEvent, JSON.parse(line.slice(6)), callbacks); } catch {}
-                currentEvent = "";
-              }
-            }
+            _parseSSELines(buffer.split("\n"), callbacks);
           }
           break;
         }
@@ -232,20 +240,7 @@ export function streamCopilot(payload, callbacks) {
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        let currentEvent = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              _dispatchCopilotEvent(currentEvent, data, callbacks);
-            } catch {
-              // 跳过无法解析的 JSON
-            }
-            currentEvent = "";
-          }
-        }
+        _parseSSELines(lines, callbacks);
       }
     })
     .catch((err) => {
@@ -282,6 +277,9 @@ function _dispatchCopilotEvent(event, data, callbacks) {
 export const copilotApi = {
   streamRun(payload, callbacks) {
     return streamCopilot(payload, callbacks);
+  },
+  listTools() {
+    return safeGet("/api/copilot/tools", undefined, "listTools");
   },
   listSessions(limit = 20) {
     return safeGet("/api/copilot/sessions", { params: { limit } }, "listSessions");

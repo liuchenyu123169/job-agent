@@ -63,32 +63,7 @@ async def copilot_run(
     )
 
 
-# ── 直通模式：跳过 LLM Planner，直接执行三步流水线 ──
-
-
-# ── 动态摘要生成 ──
-
-def _build_summary(context) -> str:
-    """从 PipelineContext 提取关键信息拼出可读的摘要。"""
-    parts = []
-    for tool_name, data in context.tool_results.items():
-        if tool_name == "match_analyze":
-            score = (data.get("analysis") or {}).get("match_score")
-            if score is not None:
-                parts.append(f"匹配度 {score} 分")
-        elif tool_name == "optimize_resume":
-            opt = data.get("optimization") or {}
-            summary = opt.get("summary")
-            if summary:
-                parts.append(f"简历优化：{str(summary)[:80]}")
-        elif tool_name == "generate_interview_questions":
-            qs = data.get("questions") or {}
-            tech = len(qs.get("technical_questions") or [])
-            proj = len(qs.get("project_questions") or [])
-            total = tech + proj + len(qs.get("behavior_questions") or []) + len(qs.get("risk_questions") or [])
-            if total:
-                parts.append(f"面试题 {total} 道（技术{tech}/项目{proj}）")
-    return " | ".join(parts) if parts else "执行完毕"
+# ── 直通模式：跳过 LLM Planner，直接按工具列表顺序执行 ──
 
 async def _fast_generator(
     context: PipelineContext,
@@ -115,8 +90,7 @@ async def _fast_generator(
             else:
                 yield error_event(tool_name, result.error or "unknown error")
 
-        dynamic_summary = _build_summary(context)
-        report = summarize_result(context, final_message=dynamic_summary)
+        report = summarize_result(context)  # 单次遍历，自动生成文本摘要
         yield final_event(summary=report["summary"], task_ids=report["task_ids"])
 
         update_copilot_session(
@@ -218,3 +192,14 @@ def get_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+# ── 工具发现 ──
+
+@router.get("/tools")
+def list_tools() -> list[dict]:
+    """返回所有已注册工具的元数据（name / description / keywords / render_type）。
+
+    前端可用此接口动态发现工具，无需硬编码工具列表。
+    """
+    return [t.to_api_dict() for t in tool_registry.list_all()]

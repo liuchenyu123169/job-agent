@@ -70,6 +70,8 @@ interview_questions_tool = ToolDefinition(
     ),
     parameters=INTERVIEW_QUESTIONS_PARAMETERS,
     execute=interview_questions_execute,
+    keywords=["面试", "题目", "考题", "问答", "提问"],
+    render_type="questions",
 )
 
 tool_registry.register(interview_questions_tool)

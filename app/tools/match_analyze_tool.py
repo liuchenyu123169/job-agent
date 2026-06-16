@@ -56,6 +56,8 @@ match_analyze_tool = ToolDefinition(
     description="分析简历与岗位描述的匹配度，返回匹配分数、优势、劣势和改进建议。适用于用户想了解自己与某个岗位的匹配程度时调用。",
     parameters=MATCH_ANALYZE_PARAMETERS,
     execute=match_analyze_execute,
+    keywords=["匹配", "分析", "评分", "对比", "合适", "适合"],
+    render_type="match_analysis",
 )
 
 tool_registry.register(match_analyze_tool)

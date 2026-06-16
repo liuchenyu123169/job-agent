@@ -56,6 +56,8 @@ optimize_resume_tool = ToolDefinition(
     description="针对特定岗位生成简历优化建议，包括技能关键词、项目建议、简历改写建议和潜在风险点。在匹配分析之后，用户想要改进简历时调用。",
     parameters=OPTIMIZE_RESUME_PARAMETERS,
     execute=optimize_resume_execute,
+    keywords=["优化", "改进", "修改简历", "润色", "完善简历"],
+    render_type="match_analysis",
 )
 
 tool_registry.register(optimize_resume_tool)

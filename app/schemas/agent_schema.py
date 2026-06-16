@@ -3,11 +3,24 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class AgentAnalyzeRequest(BaseModel):
+class _AgentBaseRequest(BaseModel):
+    """Agent 工具请求基类：resume_id + job_id 通过全局ID或用户本地编号指定。"""
     resume_id: int | None = None
     local_resume_id: int | None = None
     job_id: int | None = None
     local_job_id: int | None = None
+
+
+class AgentAnalyzeRequest(_AgentBaseRequest):
+    pass
+
+
+class AgentOptimizeResumeRequest(_AgentBaseRequest):
+    pass
+
+
+class AgentGenerateInterviewQuestionsRequest(_AgentBaseRequest):
+    enable_rag: bool = True
 
 
 class AgentAnalyzeResponse(BaseModel):
@@ -15,23 +28,9 @@ class AgentAnalyzeResponse(BaseModel):
     analysis: dict[str, Any]
 
 
-class AgentOptimizeResumeRequest(BaseModel):
-    resume_id: int | None = None
-    local_resume_id: int | None = None
-    job_id: int | None = None
-    local_job_id: int | None = None
-
-
 class AgentOptimizeResumeResponse(BaseModel):
     task_id: int
     optimization: dict[str, Any]
-
-class AgentGenerateInterviewQuestionsRequest(BaseModel):
-    resume_id: int | None = None
-    local_resume_id: int | None = None
-    job_id: int | None = None
-    local_job_id: int | None = None
-    enable_rag: bool = True
 
 class AgentGenerateInterviewQuestionsResponse(BaseModel):
     task_id: int
