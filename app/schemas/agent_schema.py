@@ -74,6 +74,10 @@ class CopilotRunRequest(BaseModel):
         default=None,
         description="指定要执行的工具列表，如 ['match_analyze', 'optimize_resume']。不传默认全跑。",
     )
+    mode: str | None = Field(
+        default=None,
+        description="执行模式: 'fast'(直通) / 'react'(单Agent) / 'coordinator'(多Agent协作)。不传自动选择。",
+    )
 
 
 class CopilotStepResult(BaseModel):
