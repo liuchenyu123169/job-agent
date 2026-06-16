@@ -1,0 +1,109 @@
+# few_shots/interview_questions.yaml
+
+- input:
+    resume_content: "2年后端开发，精通Python/Django，有RESTful API设计经验。熟悉PostgreSQL和Redis，做过用户认证系统和API网关。"
+    job_jd: "招聘Python后端工程师，负责微服务架构设计和开发。要求熟练使用FastAPI/Flask，了解Docker和Kubernetes，有数据库优化经验。"
+  output:
+    technical_questions:
+      - question: "FastAPI 和 Django 在处理异步请求时的核心区别是什么？各适合什么场景？"
+        why_ask: "候选人简历中是Django背景，但岗位要求FastAPI，需要考察其对异步框架的理解"
+        answer_hint: "FastAPI基于Starlette+ASGI原生支持async/await，适合IO密集型；Django的async支持是后加的，ORM层仍有同步限制"
+      - question: "你在API网关项目中如何处理限流和鉴权？如果流量突增10倍，你的方案会有什么瓶颈？"
+        why_ask: "候选人有API网关经验，可以深入考察设计思路和容错意识"
+        answer_hint: "限流可用令牌桶/滑动窗口；鉴权可用JWT+OAuth2；瓶颈常见于数据库连接池和网络带宽"
+      - question: "Docker 的镜像分层机制是什么？多层构建（multi-stage build）解决了什么问题？"
+        why_ask: "岗位要求了解Docker，需要考察容器化基础知识"
+        answer_hint: "每一层对应Dockerfile一条指令，层之间共享；multi-stage将编译和运行分离，减小最终镜像体积"
+    project_questions:
+      - question: "你在设计API网关时，路由转发和中间件链是怎么组织的？"
+        why_ask: "这是候选人实际项目，可以考察具体设计细节"
+        answer_hint: "可以讲中间件洋葱模型、路由匹配策略、错误处理链"
+    behavior_questions:
+      - question: "项目中出现过线上故障吗？你是怎么排查和处理的？"
+        why_ask: "考察候选人的故障处理能力和复盘习惯"
+        answer_hint: "描述具体故障→排查过程（日志/监控/自建工具）→解决方案→事后复盘措施"
+    risk_questions:
+      - question: "你目前对Kubernetes了解多少？如果入职后需要快速上手K8s，你有什么学习计划？"
+        why_ask: "岗位要求Kubernetes但简历中没有，需要评估学习意愿和速度"
+        answer_hint: "坦诚当前水平+具体的学习路径和时间表+已有容器化概念基础"
+
+- input:
+    resume_content: "4年Java开发，Spring Boot+Spring Cloud微服务经验，熟悉MySQL优化和Redis集群，做过秒杀系统。"
+    job_jd: "Java高级工程师，精通微服务架构和中间件，有高并发系统经验，熟悉JVM调优和分布式事务。"
+  output:
+    technical_questions:
+      - question: "秒杀系统中，你是怎么解决超卖问题的？Redis 和数据库层面分别做了什么？"
+        why_ask: "简历中有秒杀项目，可以直接深入考察并发控制方案"
+        answer_hint: "Redis预减库存+Lua脚本原子操作；数据库乐观锁version字段；异步MQ削峰"
+      - question: "Spring Cloud 组件中，Sentinel 和 Hystrix 的熔断策略有什么不同？你实际项目中怎么选的？"
+        why_ask: "岗位要求精通中间件选型，需要考察对比决策能力"
+        answer_hint: "Hystrix线程池隔离开销大已停更；Sentinel支持更多规则类型和控制台；按实际项目QPS和RT要求选择"
+      - question: "你做过 JVM 调优，能说一次完整的排查过程吗？用了什么工具、最终优化了什么参数？"
+        why_ask: "岗位明确要求JVM调优，考察实战深度"
+        answer_hint: "步骤：jstat看GC频率→jmap dump堆→MAT分析内存泄漏→调整新生代和老年代比例→G1 vs CMS选型"
+    project_questions:
+      - question: "秒杀系统的整体架构是什么？前端到后端到数据库的完整链路怎么设计的？"
+        why_ask: "考察系统全局视角"
+        answer_hint: "CDN静态化→Nginx限流→网关鉴权→服务层Redis预减→MQ异步下单→DB最终一致性"
+    behavior_questions:
+      - question: "在技术选型时，团队有人坚持用熟悉的老方案，有人想试新技术，你怎么处理？"
+        why_ask: "高级工程师需要决策和沟通能力"
+        answer_hint: "先做技术调研+PoC验证→对比优劣势和风险→给出数据驱动的建议→团队对齐后执行"
+    risk_questions:
+      - question: "你对分布式事务了解多少？如果现在要你设计一个跨服务的事务方案，你会怎么考虑？"
+        why_ask: "岗位要求分布式事务但简历未体现，探测真实深度"
+        answer_hint: "先确认是否必须强一致→优先用最终一致（MQ重试+SAGA补偿表）→必要时TCC/Seata→强调幂等和回滚"
+
+- input:
+    resume_content: "3年前端开发，精通Vue3和TypeScript，有微前端qiankun落地经验。熟悉前端工程化，搭过组件库和CI/CD流水线。"
+    job_jd: "高级前端工程师，要求Vue3+TS技术栈，有大型项目架构经验，了解Node.js和前端性能优化，有前端安全经验优先。"
+  output:
+    technical_questions:
+      - question: "微前端中 qiankun 的沙箱机制是怎么实现的？JS 沙箱和 CSS 沙箱分别解决了什么？"
+        why_ask: "简历中明确写了qiankun，追问实现原理考察深度"
+        answer_hint: "JS沙箱：proxy拦截window操作实现快照还原；CSS沙箱：scope前缀+shadow DOM隔离"
+      - question: "在一个有10万行代码的Vue3项目中，你会从哪些维度做性能优化？具体怎么排查？"
+        why_ask: "岗位要求性能优化经验，考察方法论和工具链"
+        answer_hint: "首屏：路由懒加载+组件异步+Tree Shaking；运行时：虚拟列表+computed缓存+避免v-if/v-for同层；排查：Lighthouse+Vue DevTools Performance"
+      - question: "前端安全方面，XSS 和 CSRF 分别怎么防御？你实际项目中遇到过吗？"
+        why_ask: "岗位要求前端安全经验，考察实战安全认知"
+        answer_hint: "XSS：输入转义（v-html慎用）+CSP策略；CSRF：SameSite Cookie+CSRF Token+Referer校验"
+    project_questions:
+      - question: "你搭的组件库是怎么设计的？从组件开发、文档、测试到发布，完整流程是什么样的？"
+        why_ask: "考察候选人对前端工程化的整体把控"
+        answer_hint: "Monorepo结构→Storybook文档→Vitest单元测试→Chromatic视觉回归→changeset版本管理→npm publish"
+    behavior_questions:
+      - question: "你怎么看待AI辅助编程（GitHub Copilot/Cursor）对前端开发的影响？你会怎么利用它？"
+        why_ask: "考察对新技术的态度和学习能力"
+        answer_hint: "正面看待→提高效率但需人工review→用于生成样板代码和测试→核心逻辑和架构决策仍需人把控"
+    risk_questions:
+      - question: "Node.js 你不算特别深入，如果后端同事休假，需要你改一个 BFF 层的接口，你会上手吗？"
+        why_ask: "探测跨栈意愿和基础广度"
+        answer_hint: "Node.js有基础→Express/Koa路由模式类似前端→能看懂业务逻辑→不会的就查文档→愿意学习"
+
+- input:
+    resume_content: "数据科学硕士，精通Python和SQL，有1年ML实习经验，做过推荐系统和用户画像。熟悉sklearn和pandas，了解深度学习。"
+    job_jd: "机器学习工程师，要求Python和TensorFlow/PyTorch经验，有模型部署和A/B测试经验，了解特征工程和数据管道。"
+  output:
+    technical_questions:
+      - question: "你做的推荐系统用了什么算法？协同过滤和基于内容的推荐各有什么适用场景和局限？"
+        why_ask: "候选人有推荐系统项目，追问算法原理和工程权衡"
+        answer_hint: "协同过滤：基于用户/物品相似度，冷启动是核心问题；内容推荐：基于物品特征，需要特征工程；混合推荐能互相弥补"
+      - question: "模型部署上线后，如果线上效果比离线差很多，你会从哪些方面排查？"
+        why_ask: "岗位要求模型部署经验，考察线上问题排查能力"
+        answer_hint: "数据漂移（特征分布变化）→线上线下特征一致性→模型版本管理→AB实验配置→服务延迟影响"
+      - question: "A/B 测试中，如何确定样本量是否足够？p 值 0.04 了能直接上线吗？"
+        why_ask: "岗位要求AB测试经验，考察统计基础和实践判断力"
+        answer_hint: "样本量：基于最小检测效应（MDE）和统计功效（power）计算；p值只是参考→还需看实际业务收益和置信区间→警惕p-hacking"
+    project_questions:
+      - question: "用户画像项目中，你如何处理冷启动问题？对于新用户你是怎么给出推荐的？"
+        why_ask: "这是推荐系统核心难点，考察候选人的实际解决方案"
+        answer_hint: "新用户：热门/趋势推荐兜底→注册时快速兴趣标签→设备ID关联已有画像→内容侧特征映射"
+    behavior_questions:
+      - question: "模型迭代时，你怎么跟产品经理解释'准确率提升了2%'到底值不值？"
+        why_ask: "考察跨团队沟通和业务价值思维"
+        answer_hint: "将指标翻译为业务语言（2%准确率→预计减少X次误判→节省Y小时人工审核→月成本降低Z）"
+    risk_questions:
+      - question: "你对TensorFlow不是很熟，但岗位要求这两个框架。你打算怎么补？"
+        why_ask: "探测学习速度和代偿方案"
+        answer_hint: "PyTorch和TensorFlow核心概念互通→1-2周可上手→先看官方文档快速过一遍→用原项目拿TF重新实现验证理解"

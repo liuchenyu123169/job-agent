@@ -1,0 +1,61 @@
+# eval_cases/interview_questions.yaml
+
+- name: "Java后端-有RAG知识"
+  variables:
+    resume_content: "3年Java开发，Spring Boot+MyBatis，做过CRM系统，熟悉MySQL和Redis。"
+    job_jd: "Java后端工程师，要求Spring Boot、MySQL、Redis，有分布式经验优先。"
+    knowledge_context: "【知识片段1】标题：MySQL索引原理 内容：InnoDB使用B+Tree作为索引结构... 【知识片段2】标题：Redis缓存策略 内容：缓存穿透/击穿/雪崩的定义和解决方案..."
+  checks:
+    has_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    technical_min_count: 3
+  keywords:
+    - "B+Tree"
+    - "Redis"
+
+- name: "前端岗位-无RAG"
+  variables:
+    resume_content: "3年前端，Vue3+TypeScript，做过后台管理系统和H5活动页。"
+    job_jd: "前端工程师，要求Vue3全家桶，有性能优化经验，了解前端工程化。"
+    knowledge_context: ""
+  checks:
+    has_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    technical_min_count: 2
+  keywords:
+    - "Vue"
+    - "性能"
+
+- name: "AI岗位-有RAG"
+  variables:
+    resume_content: "熟悉Python和LangChain，做过RAG知识库问答系统，了解Prompt Engineering。"
+    job_jd: "AI应用开发工程师，熟练LangChain/LangGraph，有RAG落地经验，了解向量数据库和Embedding。"
+    knowledge_context: "【知识片段1】标题：RAG中chunk size的影响 内容：chunk过大会导致检索精度下降... 【知识片段2】标题：LangGraph Agent工作流 内容：StateGraph通过节点和条件边实现复杂Agent编排..."
+  checks:
+    has_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    technical_min_count: 3
+  keywords:
+    - "RAG"
+    - "LangGraph"
+
+- name: "应届生-无RAG"
+  variables:
+    resume_content: "计算机本科应届生，熟悉Java和Python，课程项目：图书管理系统、个人博客。"
+    job_jd: "Java/Python后端实习生，要求计算机基础扎实，了解Web开发，有学习能力。"
+    knowledge_context: ""
+  checks:
+    has_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    technical_min_count: 1
+  keywords:
+    - "Java"
+    - "Python"
+
+- name: "高级岗位-有RAG且知识多"
+  variables:
+    resume_content: "6年Java架构师，Spring Cloud微服务，K8s和Docker，Kafka和RabbitMQ，MySQL分库分表。"
+    job_jd: "资深后端架构师，精通分布式系统设计，有高并发和高可用经验，熟悉中间件选型和调优。"
+    knowledge_context: "【知识片段1】标题：分布式事务解决方案 内容：2PC/TCC/SAGA/可靠消息最终一致... 【知识片段2】标题：微服务拆分原则 内容：按业务域拆分... 【知识片段3】标题：Kafka高性能原理 内容：顺序写磁盘+零拷贝+页缓存..."
+  checks:
+    has_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    technical_min_count: 4
+  keywords:
+    - "分布式"
+    - "Kafka"

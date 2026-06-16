@@ -14,3 +14,5 @@ passlib[bcrypt]
 bcrypt<5
 pypdf
 python-docx
+jinja2
+pyyaml

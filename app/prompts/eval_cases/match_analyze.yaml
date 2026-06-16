@@ -1,0 +1,110 @@
+# eval_cases/match_analyze.yaml
+
+- name: "Java后端-中等匹配"
+  variables:
+    resume_content: "3年Java开发经验，Spring Boot+MyBatis，做过CRM系统，了解MySQL和Redis。"
+    job_jd: "Java后端工程师，要求Spring Boot、MySQL、Redis，有分布式经验优先。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [40, 85]
+    advantages_min_count: 1
+  keywords:
+    - "Spring"
+    - "Redis"
+
+- name: "前端转全栈-弱匹配"
+  variables:
+    resume_content: "2年React前端开发经验，熟悉TypeScript和Webpack，写过简单的Express API。"
+    job_jd: "全栈工程师，精通Java Spring Boot后端开发，有数据库设计经验，熟悉AWS部署。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [0, 50]
+  keywords:
+    - "Spring"
+    - "前端"
+
+- name: "完全匹配-高分案例"
+  variables:
+    resume_content: "5年Python后端开发，精通FastAPI和Django，有微服务架构设计经验。熟练使用Docker和Kubernetes，参与过日均千万级请求的API平台。"
+    job_jd: "高级Python后端工程师，精通FastAPI/Django，有微服务和容器化经验，有高并发系统设计经验。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [75, 100]
+    advantages_min_count: 3
+  keywords:
+    - "FastAPI"
+    - "Docker"
+
+- name: "应届生-实习岗位"
+  variables:
+    resume_content: "计算机本科应届生，Java和Python都学过，课程项目：在线商城+博客系统，LeetCode刷了150题。"
+    job_jd: "Java后端实习生，要求计算机基础扎实，了解Spring Boot，有实际编码能力，有学习热情。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [30, 75]
+  keywords:
+    - "Java"
+    - "Spring"
+
+- name: "跨界转行-机械到AI"
+  variables:
+    resume_content: "机械工程本科，自学Python半年，写过爬虫和简单的Flask API，上过吴恩达ML课程，做了一个Kaggle入门比赛。"
+    job_jd: "AI算法工程师，要求计算机或数学相关硕士，精通PyTorch/TensorFlow，有论文或比赛Top成绩。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [0, 30]
+  keywords:
+    - "Python"
+
+- name: "简历信息极少"
+  variables:
+    resume_content: "Java开发，2年经验。"
+    job_jd: "Java后端工程师，熟悉Spring Boot，有数据库经验。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [0, 80]
+    advantages_min_count: 1
+
+- name: "JD信息极简"
+  variables:
+    resume_content: "4年Go后端开发，精通gin和gRPC，有K8s运维经验，负责过日志采集和监控告警系统。"
+    job_jd: "Go后端工程师。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [0, 100]
+  keywords:
+    - "Go"
+
+- name: "信息密度大"
+  variables:
+    resume_content: "8年后端开发经验。技术栈：Java/Python/Go。框架：Spring Cloud/Django/gin。中间件：Kafka/RabbitMQ。数据库：MySQL/PostgreSQL/MongoDB。缓存：Redis。容器：Docker/K8s。项目经验：电商平台（GMV日均5000万，QPS峰值10万）架构升级从单体到微服务；实时数据管道（Kafka+Flink）日处理10亿条日志；自研RPC框架支撑200+服务间调用。"
+    job_jd: "资深后端架构师，要求：精通至少两种后端语言，有大规模分布式系统设计经验（QPS>10万），熟悉中间件原理和调优，有技术管理经验（团队>5人），参与过开源项目优先。负责：制定技术演进路线，主导核心系统架构设计，Code Review和团队技术成长。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [65, 95]
+    advantages_min_count: 3
+  keywords:
+    - "微服务"
+    - "Kafka"
+
+- name: "英文JD"
+  variables:
+    resume_content: "5 years Python backend, FastAPI expert, built microservices handling 1M+ daily requests. Docker and Kubernetes in production."
+    job_jd: "Senior Python Engineer. Requirements: 5+ years Python, microservices architecture, container orchestration (Docker/K8s), experience with message queues, AWS/GCP experience preferred."
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [60, 95]
+    advantages_min_count: 1
+  keywords:
+    - "Python"
+    - "microservice"
+
+- name: "零匹配-技术栈完全不同"
+  variables:
+    resume_content: "5年iOS开发，精通Swift和UIKit，做过社交App和短视频App。"
+    job_jd: "Java后端高级工程师，精通Spring Cloud微服务，有分布式系统经验，熟悉大数据技术栈（Hadoop/Spark）。"
+  checks:
+    has_fields: [match_score, advantages, weaknesses, suggestions]
+    match_score_range: [0, 25]
+  keywords:
+    - "Java"

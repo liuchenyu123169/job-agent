@@ -1,0 +1,88 @@
+# few_shots/match_analyze.yaml
+
+- input:
+    resume_content: "3年Java后端开发经验，熟练使用Spring Boot和MyBatis，参与过电商系统订单模块的开发。熟悉MySQL和Redis，了解JVM调优。项目经验包括订单系统、库存同步服务。"
+    job_jd: "招聘Java后端开发工程师，要求5年以上经验，精通Spring Cloud微服务架构，有分布式系统设计经验，熟悉Kafka/RabbitMQ消息队列，有高并发场景优化经验。"
+  output:
+    match_score: 65
+    advantages:
+      - "Spring Boot和MyBatis经验匹配岗位基础要求"
+      - "有电商业务经验，理解订单和库存场景"
+      - "数据库和缓存技术栈（MySQL/Redis）完全覆盖"
+    weaknesses:
+      - "岗位要求5年，候选人3年，年限有差距"
+      - "缺少Spring Cloud微服务实际经验"
+      - "没有消息队列（Kafka/RabbitMQ）项目经验"
+      - "分布式系统设计经验不足"
+    suggestions:
+      - "补充一个Spring Cloud微服务实战项目（Gateway/Feign/Nacos）"
+      - "学习Kafka核心概念并在项目中集成消息队列"
+      - "准备高并发场景的面试回答（缓存穿透/击穿/雪崩）"
+      - "在简历中量化订单系统的性能指标（QPS/RT）"
+
+- input:
+    resume_content: "5年前端开发经验，精通React和TypeScript，负责过公司内部组件库的搭建和维护。有Node.js BFF层开发经验，了解Webpack和Vite构建工具链。项目经验：低代码平台、企业BI数据大屏。"
+    job_jd: "招聘全栈工程师，要求精通React+Node.js，有数据库设计能力，熟悉CI/CD流水线，有AWS或阿里云部署经验。负责公司产品从0到1的技术方案设计和落地。"
+  output:
+    match_score: 78
+    advantages:
+      - "React+TypeScript经验完全满足核心要求"
+      - "有Node.js BFF经验，可平滑过渡到全栈"
+      - "组件库搭建经验证明技术深度和抽象能力"
+      - "0到1的产品经验与岗位要求高度一致"
+    weaknesses:
+      - "Node.js仅限于BFF层，缺乏完整后端开发经验"
+      - "没有云计算/AWS部署经验"
+      - "CI/CD经验不明确"
+      - "数据库设计能力需要加强"
+    suggestions:
+      - "补充一个完整全栈项目（从前端到数据库）"
+      - "学习AWS基础服务（EC2/S3/RDS）并部署个人项目"
+      - "在简历中明确CI/CD相关经验（GitHub Actions/Jenkins）"
+      - "突出从0到1的技术选型和架构设计经历"
+
+- input:
+    resume_content: "无实际工作经验，熟悉JAVA和Python语言，掌握SpringBoot和Mybaties等技术，熟悉MySQL,Redis等数据库，掌握FastAPI、Langchain、Langgraph等技术栈，有Job Agent智能求职系统和Rag知识库问答系统等项目"
+    job_jd: "负责大模型智能体开发，基于 LangGraph 搭建记忆、工具调度、任务编排流程；落地 RAG 检索增强，优化检索精度；实现多模型熔断限流、SSE 流式接口；构建任务量化评测体系，完成 AI 应用容器化部署迭代。要求熟练 Python/FastAPI，掌握 RAG、Agent 工作流、向量库，懂 Java 后端优先。"
+  output:
+    match_score: 88
+    advantages:
+      - "掌握 JD 所需 Java、Python 双技术栈，熟练 FastAPI、LangGraph、RAG 等核心技术"
+      - "自研 Agent、RAG 两大对标项目，覆盖记忆编排、检索优化、SSE 流式、模型治理等岗位核心业务，技术匹配度高"
+    weaknesses:
+      - "无正式职场工作经验，缺少企业级容器化部署、线上高并发项目运维落地实战经历"
+    suggestions:
+      - "简历强化项目容器化、线上优化相关描述"
+      - "补充 Docker 部署细节与性能调优成果"
+
+- input:
+    resume_content: "8年全栈开发，精通Java Spring Cloud和React，主导过日活百万级SaaS平台架构。有K8s运维经验，AWS认证架构师。"
+    job_jd: "首席架构师，要求10年+经验，精通云原生和分布式架构，有大规模系统设计经验，熟悉多活容灾。"
+  output:
+    match_score: 85
+    advantages:
+      - "全栈能力完全匹配，Spring Cloud和React都精通"
+      - "有大规模SaaS平台实战，技术深度足够"
+      - "AWS认证+K8s经验覆盖云原生要求"
+    weaknesses:
+      - "架构师岗位要求10年+，目前8年略有差距"
+      - "多活容灾经验未明确提及"
+    suggestions:
+      - "在简历中突出架构设计决策案例（为什么选择某方案）"
+      - "补充容灾和高可用的具体实践经验"
+
+- input:
+    resume_content: "机械工程本科应届生，自学Python半年，写过爬虫和简单的Flask API，LeetCode刷了100题。"
+    job_jd: "Python后端实习生，要求计算机相关专业，熟悉Python基础，了解Web框架，有实际项目经验优先。"
+  output:
+    match_score: 55
+    advantages:
+      - "自学Python且有实际项目（爬虫+Flask），证明学习主动性"
+      - "刷题100道说明有基本的算法和编码能力"
+      - "实习岗位对经验要求低，态度和潜力更重要"
+    weaknesses:
+      - "非计算机专业，基础知识体系不完整"
+      - "项目经验较浅，缺少复杂系统开发经验"
+    suggestions:
+      - "系统补完计算机基础（操作系统/网络/数据库原理）"
+      - "做一个完整的Web全栈项目，覆盖前后端+数据库+部署"

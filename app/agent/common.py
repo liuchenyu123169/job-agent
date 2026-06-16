@@ -1,20 +1,39 @@
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 from app.core.constants import DEFAULT_USER_ID
 from app.core.llm import invoke_llm
 from app.db.crud import insert_agent_task
+from app.prompt_engine import PromptManager
 
-PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 logger = logging.getLogger(__name__)
+
+# 全局 PromptManager 单例（v1 版本，默认不启用 few-shot）
+_prompt_manager = PromptManager(version="v1")
+
+
+def get_prompt_manager() -> PromptManager:
+    """获取全局 PromptManager 实例（可替换 few_shot_store）。"""
+    return _prompt_manager
 
 
 def read_prompt_template(prompt_file_name: str) -> str:
-    prompt_path = PROMPTS_DIR / prompt_file_name
-    return prompt_path.read_text(encoding="utf-8")
+    """【已弃用】请用 get_prompt_manager().render() 替代。
+
+    保留此函数以兼容旧代码，内部已委托给 PromptManager。
+    """
+    # 从文件名提取模板名（去掉 .txt / .j2 后缀，去掉 _ 转 - 等）
+    template_name = prompt_file_name.rsplit(".", 1)[0]
+    # 兼容旧的 .txt 文件名映射到 .j2 模板
+    mapping = {
+        "match_analyze": "match_analyze",
+        "resume_optimize": "resume_optimize",
+        "interview_questions": "interview_questions",
+    }
+    name = mapping.get(template_name, template_name)
+    return _prompt_manager.render(name)
 
 
 def _clean_llm_json_output(text: str) -> str:
@@ -39,8 +58,8 @@ def parse_llm_json_output(raw_output: str) -> dict[str, Any]:
 
 
 def analyze_resume_job(resume_content: str, job_jd: str) -> dict[str, Any]:
-    prompt_template = read_prompt_template("match_analyze.txt")
-    prompt = prompt_template.format(
+    prompt = _prompt_manager.render(
+        "match_analyze",
         resume_content=resume_content,
         job_jd=job_jd,
     )

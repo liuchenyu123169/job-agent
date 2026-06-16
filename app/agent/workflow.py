@@ -6,7 +6,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.common import analyze_resume_job, parse_llm_json_output, read_prompt_template, save_success_task
+from app.agent.common import analyze_resume_job, get_prompt_manager, parse_llm_json_output, save_success_task
 from app.agent.state import AgentAnalyzeState
 from app.core.llm import invoke_llm
 from app.db.crud import get_job_by_id, get_resume_by_id
@@ -292,8 +292,8 @@ def build_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    prompt_template = read_prompt_template("match_analyze.txt")
-    prompt = prompt_template.format(
+    prompt = get_prompt_manager().render(
+        "match_analyze",
         resume_content=state["resume"]["content"],
         job_jd=state["job"]["jd_text"],
     )
@@ -342,8 +342,8 @@ def build_optimize_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
-    prompt_template = read_prompt_template("resume_optimize.txt")
-    prompt = prompt_template.format(
+    prompt = get_prompt_manager().render(
+        "resume_optimize",
         resume_content=state["resume"]["content"],
         job_jd=state["job"]["jd_text"],
     )
@@ -391,8 +391,8 @@ def build_interview_questions_prompt_node(state: AgentAnalyzeState) -> dict[str,
     if state.get("error_msg"):
         return {}
 
-    prompt_template = read_prompt_template("interview_questions.txt")
-    prompt = prompt_template.format(
+    prompt = get_prompt_manager().render(
+        "interview_questions",
         resume_content=state["resume"]["content"],
         job_jd=state["job"]["jd_text"],
         knowledge_context=state.get("knowledge_context") or "",

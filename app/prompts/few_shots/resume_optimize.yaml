@@ -1,0 +1,70 @@
+# few_shots/resume_optimize.yaml
+
+- input:
+    resume_content: "3年Java开发，Spring Boot+MyBatis，做过CRM系统，熟悉MySQL和Redis。"
+    job_jd: "Java后端工程师，要求Spring Boot、MySQL、Redis，有分布式经验优先。"
+  output:
+    summary: "整体匹配度较好，但需要突出分布式相关能力和量化项目成果。建议将CRM系统中的高并发场景具体化，补充技术栈关键词如Spring Cloud、MQ等。"
+    skill_keywords:
+      - "Spring Boot / Spring Cloud"
+      - "MySQL 性能优化（索引、慢查询、分库分表）"
+      - "Redis 缓存策略（穿透/击穿/雪崩）"
+      - "分布式系统基础（CAP、一致性）"
+      - "消息队列（Kafka / RabbitMQ 了解）"
+    project_suggestions:
+      - "CRM系统补充量化指标：用户量、日活、接口QPS、数据库表规模"
+      - "补充一个微服务实战项目，展示Spring Cloud Gateway/Feign/Nacos/Sentinel的使用"
+      - "如果有团队协作经验，强调Code Review、Git工作流、技术文档贡献"
+    resume_rewrite_suggestions:
+      - "工作经历用STAR法则重写：情境→任务→行动→结果"
+      - "技能栈按岗位JD顺序排列，匹配度最高的放最前面"
+      - "避免'熟悉''了解'等模糊词，改用'独立开发''主导''优化后性能提升X%'"
+    risk_points:
+      - "年限要求和实际经验的差距需要在面试中提前准备解释"
+      - "分布式经验不足是硬伤，建议补充至少一个分布式项目"
+
+- input:
+    resume_content: "应届生，计算机本科，Python和Java都学过，做过课程项目（在线商城、博客系统），LeetCode 200题。"
+    job_jd: "Java/Python后端实习生，要求计算机基础扎实，熟悉一种Web框架，有实际编码能力。"
+  output:
+    summary: "作为应届生简历，基础条件达标。建议突出自学项目和技术热情，弱化课程项目的描述，强化动手能力。"
+    skill_keywords:
+      - "Java Spring Boot / Python Flask"
+      - "MySQL 基础 + Redis 基础"
+      - "数据结构与算法（LeetCode 200题）"
+      - "Git 版本控制"
+      - "Linux 基础命令"
+    project_suggestions:
+      - "选一个课程项目做深度升级：加缓存层、加消息队列、加容器化部署"
+      - "做一个完整的从零到上线的小项目，展示全流程能力"
+      - "如果有技术博客或开源贡献，一定要加上"
+    resume_rewrite_suggestions:
+      - "项目描述不要只写'实现了XX功能'，要写'解决了什么问题、怎么解决的、结果如何'"
+      - "教育背景放技术课程列表，突出和岗位相关的课（数据库、操作系统、网络）"
+      - "LeetCode 200题从'练手'变成'算法能力证明'的表述"
+    risk_points:
+      - "只有课程项目缺少工程感，面试时容易被打上'纸上谈兵'标签"
+      - "技术栈偏泛不深，需要选定一个方向（Java或Python）做深一个项目"
+
+- input:
+    resume_content: "6年全栈，React+Node.js为主，带过3人团队，做过企业级SaaS产品从0到上线。有AWS和Docker经验。"
+    job_jd: "技术主管/高级全栈，要求React+Node.js全栈能力，有团队管理经验，熟悉云原生架构。"
+  output:
+    summary: "资历匹配度很高，简历的核心问题是表达不够'高级'——应该从执行者视角转为管理者和决策者视角。"
+    skill_keywords:
+      - "全栈架构设计（React / Node.js / PostgreSQL / Redis）"
+      - "团队管理（3人团队、任务拆分、Code Review、技术面试）"
+      - "AWS 云原生（EC2 / S3 / RDS / Lambda / ECS）"
+      - "CI/CD 流水线设计"
+      - "技术选型与架构决策"
+    project_suggestions:
+      - "SaaS产品补充架构图和数据流转说明，展示全局视角"
+      - "团队管理经历用具体案例说明：招了多少人、怎么分任务、怎么解决技术分歧"
+      - "补充技术决策案例：为什么选了A方案而不是B方案，权衡了什么"
+    resume_rewrite_suggestions:
+      - "把'I built'改成'I designed and led the team to build'"
+      - "量化管理成果：团队效率提升X%、交付周期缩短Y天、线上故障减少Z%"
+      - "添加'技术影响力'板块：内部分享、技术博客、开源贡献"
+    risk_points:
+      - "6年经验可能有'样样通样样松'的印象，需要选一个方向作为深度展示"
+      - "管理经验描述太笼统，面试官会追问'为什么选这些人、怎么淘汰人、怎么设定目标'等具体问题"

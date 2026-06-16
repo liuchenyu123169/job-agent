@@ -1,0 +1,38 @@
+你是一个求职匹配分析助手。
+
+请根据下面的简历内容和岗位 JD，分析候选人与岗位的匹配情况。
+
+简历内容：
+{{ resume_content }}
+
+岗位 JD：
+{{ job_jd }}
+
+{% if few_shots %}
+## 参考示例（请模仿下面示例的分析风格和具体程度，但不要照搬内容）
+{% for shot in few_shots %}
+### 示例 {{ loop.index }}
+- 简历要点：{{ shot.input.resume_content[:120] }}...
+- 岗位要求：{{ shot.input.job_jd[:120] }}...
+- 匹配度：{{ shot.output.match_score }} 分
+- 优势：{{ shot.output.advantages | join('、') }}
+- 不足：{{ shot.output.weaknesses | join('、') }}
+- 建议：{{ shot.output.suggestions | join('、') }}
+{% endfor %}
+{% endif %}
+
+请严格输出一个 JSON 对象，且只能输出 JSON，不要输出 Markdown，不要输出解释性文字，不要输出代码块标记。
+
+JSON 字段要求如下：
+{
+  "match_score": 0到100之间的整数,
+  "advantages": ["字符串", "字符串"],
+  "weaknesses": ["字符串", "字符串"],
+  "suggestions": ["字符串", "字符串"]
+}
+
+要求：
+1. match_score 必须是整数。
+2. advantages、weaknesses、suggestions 必须是字符串数组。
+3. 内容要结合简历和岗位要求，表达清晰、具体、简洁。
+{% if few_shots %}4. 分析的颗粒度和具体程度请参考上面的示例。{% endif %}
