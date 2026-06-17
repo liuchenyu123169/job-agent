@@ -18,6 +18,10 @@ class PipelineContext:
     job_id: int | None = None
     personal_info: str | None = None
 
+    # 会话相关
+    session_id: int | None = None
+    messages_summary: str | None = None
+
     # 各步骤的执行结果（按工具名存储）
     tool_results: dict[str, dict[str, Any]] = field(default_factory=dict)
 

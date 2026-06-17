@@ -3,6 +3,8 @@
 两种执行路径（后端 Skill 匹配自动选择）：
 - 意图明确 (Skill 命中) → 直接跑子 Agent pipeline，跳过 Coordinator LLM
 - 意图模糊 (Skill 未命中) → Coordinator LLM 推理委派
+
+多轮对话：通过 session_id 续接已有会话，自动加载历史消息。
 """
 
 import logging
@@ -20,10 +22,12 @@ from app.agents import (
 )
 from app.api.deps import get_current_user
 from app.api.stream_utils import error_event, final_event, step_complete_event, step_start_event
+from app.copilot.conversation import conversation_manager
 from app.copilot.state import PipelineContext, PipelineState
 from app.copilot.summarizer import summarize_result
 from app.db.crud import (
     create_copilot_session,
+    get_conversation_messages,
     get_copilot_session,
     list_copilot_sessions,
     update_copilot_session,
@@ -57,6 +61,8 @@ async def copilot_run(
     后端根据 Skill 匹配自动选择路径：
     - 命中 → 直接跑子 Agent pipeline（零路由延迟）
     - 未命中 → Coordinator LLM 推理委派
+
+    多轮对话：传 session_id 续接已有会话，自动加载历史消息。
     """
     user_id = int(current_user["id"])
     context = PipelineContext(
@@ -65,14 +71,29 @@ async def copilot_run(
         personal_info=payload.personal_info,
     )
 
-    session = create_copilot_session(goal=payload.goal, user_id=user_id)
-    session_id = int(session["id"])
+    # ── 会话管理：加载历史或创建新会话 ──
+    history_messages: list = []
+
+    if payload.session_id:
+        session = get_copilot_session(payload.session_id, user_id=user_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        session_id = payload.session_id
+        context.session_id = session_id
+        context.messages_summary = session.get("messages_summary")
+
+        # 加载历史消息（Coordinator 路径使用）
+        history_messages = conversation_manager.load_history(session_id, user_id, system_prompt="")
+        logger.info("[Copilot] resume session=%d, %d history messages", session_id, len(history_messages))
+    else:
+        session = create_copilot_session(goal=payload.goal, user_id=user_id)
+        session_id = int(session["id"])
+        context.session_id = session_id
 
     # ── 后端 Skill 匹配：决定走哪条路径 ──
     skills = skill_registry.match_all(payload.goal)
 
     if skills:
-        # 合并所有命中 Skill 的 sub_agents，去重
         sub_agent_names = _merge_agents(skills)
         tools = _merge_tools(skills)
         logger.info("[Copilot] skills=%s agents=%s tools=%s",
@@ -83,10 +104,10 @@ async def copilot_run(
         elif tools:
             generator = _direct_tools(context, user_id, session_id, tools)
         else:
-            generator = _coordinator_generator(context, user_id, session_id, payload.goal)
+            generator = _coordinator_generator(context, user_id, session_id, payload.goal, history_messages)
     else:
         logger.info("[Copilot] no skill matched, fallback to coordinator")
-        generator = _coordinator_generator(context, user_id, session_id, payload.goal)
+        generator = _coordinator_generator(context, user_id, session_id, payload.goal, history_messages)
 
     return StreamingResponse(
         generator,
@@ -163,8 +184,15 @@ async def _direct_agents(
             else:
                 yield error_event(name, result.get("error") or "unknown error")
 
+        # 保存对话消息（direct 路径也记录到会话历史）
+        conversation_manager.save_messages(
+            session_id, user_id,
+            [HumanMessage(content=f"执行任务：{', '.join(agent_names)}")],
+        )
+
         report = summarize_result(context)
-        yield final_event(summary=report["summary"], task_ids=report["task_ids"])
+        report["session_id"] = session_id
+        yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
 
         update_copilot_session(
             session_id=session_id, status="COMPLETED",
@@ -215,8 +243,15 @@ async def _direct_tools(
             else:
                 yield error_event(tool_name, result.error or "unknown error")
 
+        # 保存对话消息（direct tools 路径也记录到会话历史）
+        conversation_manager.save_messages(
+            session_id, user_id,
+            [HumanMessage(content=f"执行任务：{', '.join(tools)}")],
+        )
+
         report = summarize_result(context)
-        yield final_event(summary=report["summary"], task_ids=report["task_ids"])
+        report["session_id"] = session_id
+        yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
 
         update_copilot_session(
             session_id=session_id, status="COMPLETED",
@@ -242,13 +277,28 @@ async def _coordinator_generator(
     user_id: int,
     session_id: int,
     goal: str,
+    history_messages: list | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Coordinator SSE 生成器：委派子 Agent，流式推送进度。"""
+    """Coordinator SSE 生成器：委派子 Agent，流式推送进度。
+
+    支持多轮对话：传入 history_messages 则从历史消息恢复上下文。
+    """
     current_tool: str | None = None
     final_messages: list = []
 
+    # 构建初始消息列表：历史消息 + 当前用户消息
+    if history_messages:
+        messages = list(history_messages)
+        messages.append(HumanMessage(content=goal))
+        # 管理上下文窗口
+        messages, summary = conversation_manager.manage_window(messages)
+        if summary:
+            context.messages_summary = summary
+    else:
+        messages = [HumanMessage(content=goal)]
+
     initial_state: PipelineState = {
-        "messages": [HumanMessage(content=goal)],
+        "messages": messages,
         "context": context,
         "user_id": user_id,
     }
@@ -279,8 +329,14 @@ async def _coordinator_generator(
                 final_text = str(msg.content or "")
                 break
 
+        # 保存本轮消息到 DB
+        conversation_manager.save_messages(session_id, user_id, final_messages)
+        if context.messages_summary:
+            conversation_manager.save_summary(session_id, user_id, context.messages_summary)
+
         report = summarize_result(context, final_message=final_text)
-        yield final_event(summary=report["summary"], task_ids=report["task_ids"])
+        report["session_id"] = session_id
+        yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
 
         update_copilot_session(
             session_id=session_id, status="COMPLETED",
@@ -333,3 +389,55 @@ def list_tools() -> list[dict]:
 def list_skills() -> list[dict]:
     """返回所有 Agent Skill 的元数据。"""
     return skill_registry.to_api_list()
+
+
+@router.get("/sessions/{session_id}/messages")
+def get_session_messages(
+    session_id: int,
+    current_user: dict = Depends(get_current_user),
+) -> list[dict]:
+    """返回指定会话的所有对话消息（用于前端恢复聊天记录）。
+
+    返回格式：[{role, content, created_at}, ...]
+    role 使用前端约定：'user' | 'copilot' | 'tool'
+    """
+    user_id = int(current_user["id"])
+    session = get_copilot_session(session_id, user_id=user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    rows = get_conversation_messages(session_id, user_id)
+    result: list[dict] = []
+    for row in rows:
+        db_role = str(row.get("role") or "")
+        # 映射 DB role → 前端 role
+        frontend_role = {
+            "user": "user",
+            "assistant": "copilot",
+            "ai": "copilot",
+            "tool": "tool",
+            "system": "copilot",
+        }.get(db_role, "copilot")
+        result.append({
+            "role": frontend_role,
+            "content": str(row.get("content") or ""),
+            "created_at": str(row.get("created_at") or ""),
+            "tool_name": row.get("tool_name"),
+        })
+    return result
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(
+    session_id: int,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """删除会话及其所有消息。"""
+    user_id = int(current_user["id"])
+    session = get_copilot_session(session_id, user_id=user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    deleted = conversation_manager.clear_session(session_id, user_id)
+    update_copilot_session(
+        session_id=session_id, status="ARCHIVED", user_id=user_id,
+    )
+    return {"session_id": session_id, "deleted_messages": deleted}

@@ -24,17 +24,65 @@ const sidebarItems = [
 ];
 const activePanel = ref(null);
 
+/* ── 会话管理（侧边栏历史列表） ── */
+const currentSessionId = ref(getStoredSessionId());
+const sessions = ref([]);
+const sessionsExpanded = ref(true);
+
+function getStoredSessionId() {
+  const stored = localStorage.getItem("currentSessionId");
+  return stored ? Number(stored) : null;
+}
+function storeSessionId(id) {
+  currentSessionId.value = id;
+  localStorage.setItem("currentSessionId", String(id));
+}
+async function loadSessions() {
+  try { sessions.value = await copilotApi.listSessions(20); } catch { /* 静默 */ }
+}
+async function selectSession(sessionId) {
+  currentSessionId.value = sessionId;
+  storeSessionId(sessionId);
+  activePanel.value = null; // 关闭其他面板
+  if (chatRef.value) {
+    await chatRef.value.loadSessionHistory(sessionId);
+  }
+}
+async function newChat() {
+  currentSessionId.value = null;
+  localStorage.removeItem("currentSessionId");
+  if (chatRef.value) {
+    chatRef.value.messages = [];
+    chatRef.value.welcome(currentUser.value?.username || "");
+  }
+}
+
+function truncateGoal(goal, maxLen = 18) {
+  if (!goal) return '新对话';
+  return goal.length > maxLen ? goal.slice(0, maxLen) + '...' : goal;
+}
+
 /* ── 认证状态 ── */
 const token = ref(localStorage.getItem("token") || "");
 const currentUser = ref(null);
 const isLoggedIn = computed(() => Boolean(token.value && currentUser.value));
 
-/* ── 全局消息 ── */
+/* ── 全局消息（fixed 浮层 + 自动消失） ── */
 const message = ref("");
 const error = ref("");
+const toastVisible = ref(false);
+let toastTimer = null;
+
 function setMessage(text, isError = false) {
+  clearTimeout(toastTimer);
   if (isError) { error.value = text; message.value = ""; }
   else { message.value = text; error.value = ""; }
+  toastVisible.value = true;
+  toastTimer = setTimeout(() => {
+    toastVisible.value = false;
+    message.value = "";
+    error.value = "";
+  }, 3000);
 }
 
 /* ── 当前选中资源 ── */
@@ -148,10 +196,18 @@ provide("applyJobSelection", applyJobSelection);
 provide("fetchResumeList", fetchResumeList);
 provide("fetchJobList", fetchJobList);
 provide("fetchTasks", fetchTasks);
+// 会话管理
+provide("currentSessionId", currentSessionId);
+provide("sessions", sessions);
+provide("selectSession", selectSession);
+provide("newChat", newChat);
+provide("loadSessions", loadSessions);
+provide("storeSessionId", storeSessionId);
 
 onMounted(() => {
   setUnauthorizedHandler(() => clearSession());
   restoreSession();
+  loadSessions();
 });
 onUnmounted(() => setUnauthorizedHandler(null));
 </script>
@@ -161,8 +217,6 @@ onUnmounted(() => setUnauthorizedHandler(null));
     <!-- ═══ 登录页 ═══ -->
     <template v-if="!isLoggedIn">
       <AuthForm @loggedIn="onLoggedIn" />
-      <div v-if="error" class="toast toast-error" @click="error=''">{{ error }}</div>
-      <div v-else-if="message" class="toast toast-info" @click="message=''">{{ message }}</div>
     </template>
 
     <!-- ═══ 主界面 ═══ -->
@@ -182,6 +236,23 @@ onUnmounted(() => setUnauthorizedHandler(null));
               <span class="nav-icon">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
             </button>
+            <!-- 会话历史（对话子列表） -->
+            <div class="session-list" v-if="sessions.length > 0">
+              <div class="session-list-header" @click="sessionsExpanded = !sessionsExpanded">
+                <span class="session-list-arrow">{{ sessionsExpanded ? '▾' : '▸' }}</span>
+                <span>历史对话</span>
+                <button class="btn-new-chat" @click.stop="newChat()" title="新对话">＋</button>
+              </div>
+              <div class="session-list-items" v-show="sessionsExpanded">
+                <button v-for="s in sessions" :key="s.id"
+                  class="session-item"
+                  :class="{ active: s.id === currentSessionId }"
+                  @click="selectSession(s.id)">
+                  <span class="session-goal">{{ truncateGoal(s.goal) }}</span>
+                  <span class="session-date">{{ (s.created_at || '').slice(0, 10) }}</span>
+                </button>
+              </div>
+            </div>
           </nav>
           <div class="sidebar-panel">
             <span>当前简历</span>
@@ -199,8 +270,6 @@ onUnmounted(() => setUnauthorizedHandler(null));
 
         <!-- ── 主视图 ── -->
         <div class="main-shell">
-          <div v-if="error" class="toast toast-error" @click="error=''">{{ error }}</div>
-          <div v-else-if="message" class="toast toast-info" @click="message=''">{{ message }}</div>
 
           <ChatPanel ref="chatRef" @openPanel="openPanel" />
 
@@ -223,6 +292,12 @@ onUnmounted(() => setUnauthorizedHandler(null));
         </div>
       </div>
     </template>
+
+    <!-- ═══ 全局 Toast（fixed 浮层，自动消失） ═══ -->
+    <Transition name="toast-fade">
+      <div v-if="toastVisible && error" class="toast-overlay toast-overlay-error" @click="toastVisible=false">{{ error }}</div>
+      <div v-else-if="toastVisible && message" class="toast-overlay toast-overlay-info" @click="toastVisible=false">{{ message }}</div>
+    </Transition>
   </div>
 </template>
 
@@ -250,11 +325,39 @@ onUnmounted(() => setUnauthorizedHandler(null));
 .sidebar-footer { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; }
 .user-chip-inline { display: flex; align-items: center; gap: 6px; color: #cbd5e1; font-size: 13px; }
 
+/* ── 会话列表（侧边栏子列表） ── */
+.session-list { margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px; }
+.session-list-header { display: flex; align-items: center; gap: 4px; padding: 6px 12px; color: #94a3b8; font-size: 11px; cursor: pointer; user-select: none; }
+.session-list-header:hover { color: #cbd5e1; }
+.session-list-arrow { width: 12px; font-size: 10px; }
+.btn-new-chat { margin-left: auto; background: none; border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; border-radius: 6px; width: 22px; height: 22px; font-size: 12px; line-height: 1; cursor: pointer; padding: 0; }
+.btn-new-chat:hover { color: #fff; border-color: rgba(255,255,255,0.25); }
+.session-list-items { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
+.session-item { width: 100%; padding: 6px 12px 6px 24px; border: none; border-radius: 8px; background: transparent; color: #94a3b8; text-align: left; font-size: 12px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.session-item:hover { background: rgba(255,255,255,0.04); color: #cbd5e1; }
+.session-item.active { background: rgba(37,99,235,0.2); color: #fff; }
+.session-goal { line-height: 1.4; }
+.session-date { font-size: 10px; color: #64748b; }
+.session-item.active .session-date { color: #93c5fd; }
+
 /* ── 主视图 ── */
 .main-shell { margin-left: 220px; width: calc(100% - 220px); min-height: 100vh; display: flex; flex-direction: column; position: relative; }
-.toast { padding: 10px 16px; font-size: 13px; text-align: center; cursor: pointer; }
-.toast-error { background: #fef2f2; color: #b91c1c; border-bottom: 1px solid #fecaca; }
-.toast-info { background: #ecfdf5; color: #047857; border-bottom: 1px solid #a7f3d0; }
+/* ── 全局 Toast（fixed 浮层，浮于所有内容之上） ── */
+.toast-overlay {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  padding: 12px 24px; font-size: 14px; border-radius: 12px; cursor: pointer;
+  z-index: 9999; max-width: 520px; text-align: center;
+  box-shadow: 0 8px 30px rgba(15,23,42,0.15);
+  pointer-events: auto;
+}
+.toast-overlay-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.toast-overlay-info  { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+
+/* Toast 进入/离开动画 */
+.toast-fade-enter-active { transition: all 0.3s ease-out; }
+.toast-fade-leave-active { transition: all 0.25s ease-in; }
+.toast-fade-enter-from { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+.toast-fade-leave-to   { opacity: 0; transform: translateX(-50%) translateY(-8px); }
 
 /* ── 面板 ── */
 .panel-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.3); z-index: 30; display: flex; justify-content: flex-end; }

@@ -45,6 +45,9 @@ def error_event(tool_name: str, error: str) -> str:
     return sse_event("error", {"tool": tool_name, "error": error})
 
 
-def final_event(summary: str, task_ids: list[int]) -> str:
+def final_event(summary: str, task_ids: list[int], session_id: int | None = None) -> str:
     """全部完成事件。"""
-    return sse_event("final", {"summary": summary, "task_ids": task_ids})
+    data: dict[str, Any] = {"summary": summary, "task_ids": task_ids}
+    if session_id is not None:
+        data["session_id"] = session_id
+    return sse_event("final", data)

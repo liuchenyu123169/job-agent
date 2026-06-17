@@ -642,3 +642,122 @@ def list_copilot_sessions(
     finally:
         if conn is not None:
             conn.close()
+
+
+# ── Conversation Messages CRUD ──
+
+import hashlib  # noqa: E402
+
+
+def _make_content_hash(role: str, content: str | None, tool_call_id: str | None = None) -> str:
+    """生成消息去重哈希。"""
+    raw = f"{role}::{content or ''}::{tool_call_id or ''}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def create_conversation_message(
+    session_id: int,
+    user_id: int,
+    role: str,
+    content: str | None = None,
+    tool_calls_json: str | None = None,
+    tool_call_id: str | None = None,
+    tool_name: str | None = None,
+) -> int | None:
+    """插入一条对话消息。已存在则跳过（返回 None）。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        content_hash = _make_content_hash(role, content, tool_call_id)
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO conversation_messages
+                (session_id, user_id, role, content, tool_calls_json, tool_call_id, tool_name, content_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, user_id, role, content, tool_calls_json, tool_call_id, tool_name, content_hash),
+        )
+        conn.commit()
+        return int(cursor.lastrowid) if cursor.lastrowid else None
+    except sqlite3.Error as exc:
+        if conn is not None:
+            conn.rollback()
+        raise RuntimeError("Failed to create conversation message") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_conversation_messages(
+    session_id: int,
+    user_id: int,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """加载会话的所有消息，按创建时间升序。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, session_id, user_id, role, content, tool_calls_json, tool_call_id, tool_name, created_at
+            FROM conversation_messages
+            WHERE session_id = ? AND user_id = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (session_id, user_id, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Failed to get conversation messages for session {session_id}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def delete_conversation_messages(session_id: int, user_id: int) -> int:
+    """删除会话的所有消息，返回删除条数。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM conversation_messages WHERE session_id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+        return deleted
+    except sqlite3.Error as exc:
+        if conn is not None:
+            conn.rollback()
+        raise RuntimeError(f"Failed to delete conversation messages for session {session_id}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_session_messages_summary(
+    session_id: int,
+    user_id: int,
+    messages_summary: str | None,
+) -> None:
+    """更新会话的消息摘要。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE copilot_session SET messages_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+            (messages_summary, session_id, user_id),
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        if conn is not None:
+            conn.rollback()
+        raise RuntimeError(f"Failed to update messages_summary for session {session_id}") from exc
+    finally:
+        if conn is not None:
+            conn.close()

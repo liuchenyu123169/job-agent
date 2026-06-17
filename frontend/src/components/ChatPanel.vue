@@ -1,5 +1,5 @@
 <script setup>
-import { inject, ref, nextTick } from "vue";
+import { inject, ref, nextTick, onMounted } from "vue";
 import { normalizeToArray } from "./utils.js";
 
 const api = inject("api");
@@ -7,9 +7,18 @@ const setMessage = inject("setMessage");
 const currentResume = inject("currentResume");
 const currentJob = inject("currentJob");
 const fetchTasks = inject("fetchTasks");
+const currentUser = inject("currentUser");
 
-/* ── 工具元数据（用于步骤卡片的中文标签） ── */
-const toolMetaMap = ref({});     // { name: { description, keywords, render_type } }
+// 会话管理（状态由 App.vue 持有，ChatPanel 只消费）
+const currentSessionId = inject("currentSessionId");
+const sessions = inject("sessions");
+const selectSession = inject("selectSession");
+const newChat = inject("newChat");
+const loadSessions = inject("loadSessions");
+const storeSessionId = inject("storeSessionId");
+
+/* ── 工具元数据 ── */
+const toolMetaMap = ref({});
 
 async function loadMeta() {
   try {
@@ -20,30 +29,58 @@ async function loadMeta() {
   } catch { /* 静默降级 */ }
 }
 
-loadMeta();
+/* ── 历史消息加载（由 App.vue 的 selectSession 调用） ── */
+async function loadSessionHistory(sessionId) {
+  try {
+    const msgs = await api.copilotApi.getSessionMessages(sessionId);
+    if (msgs && msgs.length > 0) {
+      messages.value = convertHistoryToMessages(msgs);
+    }
+  } catch { /* 会话可能已删除 */ }
+}
+
+function convertHistoryToMessages(historyMsgs) {
+  const result = [];
+  for (const m of historyMsgs) {
+    if (m.role === "user" || m.role === "human") {
+      result.push({ role: "user", text: m.content || "" });
+    } else if (m.role === "copilot") {
+      result.push({ role: "copilot", text: m.content || "" });
+    }
+  }
+  return result;
+}
+
+/* ── 初始化 ── */
+onMounted(async () => {
+  loadMeta();
+  if (currentSessionId.value) {
+    await loadSessionHistory(currentSessionId.value);
+  }
+  if (messages.value.length === 0) {
+    welcome(currentUser?.username || "");
+  }
+});
 
 /* ── 聊天状态 ── */
-const messages = ref([]);       // {role, text?, steps?, final?, error?}
+const messages = ref([]);
 const input = ref("");
 const running = ref(false);
 const cancelFn = ref(null);
 const container = ref(null);
 
-/* ── 步骤结果预处理：规范化所有数组字段 ── */
+/* ── 步骤结果预处理 ── */
 function preNormalize(step) {
   if (!step || !step.summary) return;
   const s = step.summary;
-  // 匹配分析中的 list 字段
   ["advantages", "weaknesses", "suggestions"].forEach(k => {
     if (s.analysis && s.analysis[k] !== undefined) s.analysis[k] = normalizeToArray(s.analysis[k]);
   });
-  // 简历优化中的 list 字段
   if (s.optimization) {
     ["skill_keywords", "project_suggestions", "resume_rewrite_suggestions", "risk_points"].forEach(k => {
       if (s.optimization[k] !== undefined) s.optimization[k] = normalizeToArray(s.optimization[k]);
     });
   }
-  // 面试题分组
   if (s.questions) {
     ["technical_questions", "project_questions", "behavior_questions", "risk_questions"].forEach(k => {
       if (s.questions[k] !== undefined) s.questions[k] = normalizeToArray(s.questions[k]);
@@ -54,7 +91,6 @@ function preNormalize(step) {
 /* ── 消息操作 ── */
 function addMessage(msg) {
   messages.value.push(msg);
-  // 消息在列表末尾之后才触发滚动
   nextTick(() => {
     if (container.value) {
       container.value.scrollTop = container.value.scrollHeight;
@@ -66,12 +102,12 @@ function welcome(username) {
   if (messages.value.length === 0) {
     addMessage({
       role: "copilot",
-      text: `你好 ${username || ""}！我是 JobAgent AI 求职助手。\n\n我可以帮你：\n· 上传简历 → 点击左侧「简历管理」\n· 新建岗位 → 点击左侧「岗位管理」\n· 一键备战 → 选中简历和岗位后，输入「全面备战」\n· 岗位推荐 → 点击左侧「岗位推荐」\n· 查看历史任务 → 点击左侧「任务记录」\n\n在左侧选好简历和岗位后，直接对我说你的需求就行。`,
+      text: `你好 ${username || ""}！我是 JobAgent AI 求职助手。\n\n我可以帮你：\n· 上传简历 → 点击左侧「简历管理」\n· 新建岗位 → 点击左侧「岗位管理」\n· 一键备战 → 选中简历和岗位后，输入「全面备战」\n· 定制简历 → 输入「帮我生成一份简历」\n· 岗位推荐 → 点击左侧「岗位推荐」\n· 查看历史任务 → 点击左侧「任务记录」\n\n在左侧选好简历和岗位后，直接对我说你的需求就行。`,
     });
   }
 }
 
-/* ── 检测是否为简历生成意图（无简历时可免选简历） ── */
+/* ── 简历生成意图检测 ── */
 const RESUME_GEN_KEYWORDS = ["生成简历", "定制简历", "写简历", "简历生成", "做简历", "制作简历", "生成一份简历", "写一份简历", "写个简历", "生成个简历", "做一份简历", "制作一份简历"];
 
 function isResumeGenIntent(text) {
@@ -85,8 +121,6 @@ function send() {
   if (!text || running.value) return;
   if (!currentJob.id) { setMessage("请先在左侧「岗位管理」中选择目标岗位。", true); return; }
 
-  // 简历生成意图：允许无简历（用 personal_info 替代）
-  // 其他意图：必须有简历
   const isGenResume = isResumeGenIntent(text);
   if (!isGenResume && !currentResume.id) {
     setMessage("请先在左侧「简历管理」中选择当前简历，或输入「生成简历」类指令以使用自由文本模式。", true);
@@ -104,7 +138,6 @@ function send() {
   addMessage(copilotMsg);
   running.value = true;
 
-  // 构建请求：有简历传 resume_id，无简历（且为生成简历意图）传 personal_info
   const payload = {
     goal: text,
     job_id: Number(currentJob.id),
@@ -114,8 +147,11 @@ function send() {
   } else if (isGenResume) {
     payload.personal_info = text;
   }
+  // 多轮对话：带上当前会话 ID
+  if (currentSessionId.value) {
+    payload.session_id = currentSessionId.value;
+  }
 
-  // 后端根据 Skill 自动匹配路由，前端只传 goal
   cancelFn.value = api.copilotApi.streamRun(payload,
     {
       onStepStart(data) {
@@ -133,6 +169,10 @@ function send() {
       },
       onFinal(data) {
         copilotMsg.final = data;
+        // 保存会话 ID（首次对话时后端返回）
+        if (data.session_id && !currentSessionId.value) {
+          storeSessionId(data.session_id);
+        }
         running.value = false;
         fetchTasks();
       },
@@ -149,7 +189,7 @@ function cancel() {
   running.value = false;
 }
 
-defineExpose({ messages, welcome, send });
+defineExpose({ messages, welcome, send, loadSessionHistory });
 </script>
 
 <template>

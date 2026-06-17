@@ -33,6 +33,20 @@ def _ensure_user_id_column(cursor: sqlite3.Cursor, table_name: str) -> None:
     )
 
 
+def _ensure_column(
+    cursor: sqlite3.Cursor,
+    table_name: str,
+    column_name: str,
+    column_type: str,
+) -> None:
+    """安全添加列：如果列不存在则 ALTER TABLE ADD COLUMN。"""
+    columns = _get_table_columns(cursor, table_name)
+    if column_name not in columns:
+        cursor.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+        )
+
+
 def _ensure_local_id_column(
     cursor: sqlite3.Cursor,
     table_name: str,
@@ -187,6 +201,40 @@ def init_db() -> None:
             )
             """
         )
+
+        cursor.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                tool_calls_json TEXT,
+                tool_call_id TEXT,
+                tool_name TEXT,
+                content_hash TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES copilot_session (id),
+                FOREIGN KEY (user_id) REFERENCES user (id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_msg_dedup
+            ON conversation_messages (session_id, content_hash)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_conversation_msg_session
+            ON conversation_messages (session_id, created_at)
+            """
+        )
+
+        # 给 copilot_session 加 messages_summary 列（安全迁移）
+        _ensure_column(cursor, "copilot_session", "messages_summary", "TEXT")
 
         cursor.execute(
             """

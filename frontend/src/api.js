@@ -290,4 +290,10 @@ export const copilotApi = {
   getSession(sessionId) {
     return safeGet(`/api/copilot/sessions/${sessionId}`, undefined, "getSession");
   },
+  getSessionMessages(sessionId) {
+    return safeGet(`/api/copilot/sessions/${sessionId}/messages`, undefined, "getSessionMessages");
+  },
+  deleteSession(sessionId) {
+    return request.delete(`/api/copilot/sessions/${sessionId}`);
+  },
 };
