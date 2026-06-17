@@ -14,14 +14,21 @@ import TaskPanel from "./components/TaskPanel.vue";
 import KnowledgePanel from "./components/KnowledgePanel.vue";
 
 /* ── 侧边栏 ── */
-const sidebarItems = [
-  { key: "chat",     label: "对话",     icon: "💬" },
-  { key: "resume",   label: "简历管理", icon: "📄" },
-  { key: "job",      label: "岗位管理", icon: "💼" },
-  { key: "recommend",label: "岗位推荐", icon: "🔍" },
-  { key: "task",     label: "任务记录", icon: "📋" },
-  { key: "knowledge",label: "RAG 知识库",icon: "⚙️" },
+const baseSidebarItems = [
+  { key: "chat",      label: "对话",      icon: "💬" },
+  { key: "resume",    label: "简历管理",  icon: "📄" },
+  { key: "job",       label: "岗位管理",  icon: "💼" },
+  { key: "recommend", label: "岗位推荐",  icon: "🔍" },
+  { key: "task",      label: "任务记录",  icon: "📋" },
 ];
+const sidebarItems = computed(() => {
+  const items = [...baseSidebarItems];
+  if (currentUser.value?.is_admin) {
+    items.push({ key: "evaluation", label: "评测",      icon: "📊" });
+    items.push({ key: "knowledge",  label: "RAG 知识库", icon: "⚙️" });
+  }
+  return items;
+});
 const activePanel = ref(null);
 
 /* ── 会话管理（侧边栏历史列表） ── */
@@ -176,6 +183,36 @@ function onLoggedIn() {
 
 function logout() { clearSession(false); setMessage("已退出登录。"); }
 
+/* ── 评测 ── */
+const evalWorkflows = ref(["match_analyze", "interview_questions", "resume_optimize", "resume_generate"]);
+const evalWorkflow = ref("match_analyze");
+const evalUseJudge = ref(true);
+const evalRunning = ref(false);
+const evalResult = ref(null);
+
+async function runEvaluation() {
+  evalRunning.value = true;
+  evalResult.value = null;
+  try {
+    const resp = await fetch("http://127.0.0.1:8000/api/evaluation/run", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token.value}`,
+      },
+      body: JSON.stringify({
+        workflows: [evalWorkflow.value],
+        llm_judge: evalUseJudge.value,
+        judge_samples: 3,
+      }),
+    });
+    evalResult.value = await resp.json();
+  } catch (err) {
+    evalResult.value = { error: String(err) };
+  }
+  evalRunning.value = false;
+}
+
 /* ── 面板切换 ── */
 function togglePanel(key) {
   activePanel.value = activePanel.value === key ? null : key;
@@ -286,6 +323,26 @@ onUnmounted(() => setUnauthorizedHandler(null));
                 <RecommendPanel v-if="activePanel === 'recommend'" @close="closePanel" />
                 <TaskPanel ref="taskRef" v-if="activePanel === 'task'" />
                 <KnowledgePanel v-if="activePanel === 'knowledge'" />
+                <div v-if="activePanel === 'evaluation'" class="eval-panel-inline">
+                  <h4>自动化评测</h4>
+                  <p>选择 workflow 并运行评测，结果保存到 evaluation_results/ 目录。</p>
+                  <div class="form-stack">
+                    <div class="field"><span>Workflow</span>
+                      <select v-model="evalWorkflow" style="width:100%;height:40px;border-radius:10px;padding:0 12px;border:1px solid #cbd5e1;">
+                        <option v-for="w in evalWorkflows" :key="w" :value="w">{{ w }}</option>
+                      </select>
+                    </div>
+                    <div class="field"><span>LLM Judge</span>
+                      <input type="checkbox" v-model="evalUseJudge" /> 启用 LLM 质量评分（耗时较长）
+                    </div>
+                    <button class="btn btn-primary" :disabled="evalRunning" @click="runEvaluation">
+                      {{ evalRunning ? '评测中...' : '运行评测' }}
+                    </button>
+                  </div>
+                  <div v-if="evalResult" style="margin-top:16px;background:#f8fafc;border-radius:12px;padding:16px;max-height:400px;overflow:auto;">
+                    <pre style="font-size:12px;white-space:pre-wrap;margin:0;">{{ JSON.stringify(evalResult, null, 2) }}</pre>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -9,11 +9,15 @@
     job_title: "Java后端工程师"
   checks:
     required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
-    required_themes: ["Spring", "Java", "Redis"]
+    required_themes:
+      - ["Spring", "Spring Boot"]
+      - ["Java", "JVM"]
+      - ["Redis", "缓存"]
+      - ["数据库", "MySQL", "SQL"]
     forbidden_claims: ["前端", "React", "Vue"]
   reference:
-    summary: "应生成4类面试题共8-10道，技术题侧重Java/Spring/中间件，有RAG知识增强"
-    key_points: ["至少4道技术题", "至少1道项目题", "至少1道行为题", "至少1道风险题", "RAG知识应体现在why_ask或answer_hint中"]
+    summary: "应生成4类面试题共8-10道，技术题侧重Java/Spring/中间件"
+    key_points: ["至少4道技术题", "至少1道项目题", "至少1道行为题", "至少1道风险题"]
 
 - name: "前端岗位-无RAG"
   input:
@@ -24,11 +28,15 @@
     job_title: "前端工程师"
   checks:
     required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
-    required_themes: ["React", "TypeScript", "前端"]
+    required_themes:
+      - ["React", "Vue", "框架"]
+      - ["TypeScript", "TS"]
+      - ["前端", "Web", "页面"]
+      - ["性能", "优化", "加载"]
     forbidden_claims: ["Spring", "Django", "后端架构"]
   reference:
-    summary: "应生成4类面试题，技术题侧重React/TS/前端工程化，无RAG时题目数量可以略少"
-    key_points: ["技术题围绕React和TypeScript", "项目题问前端架构和性能优化", "行为题问跨团队协作", "每道题有why_ask和answer_hint"]
+    summary: "应生成4类面试题，技术题侧重React/TS/前端工程化"
+    key_points: ["技术题围绕React和TypeScript", "项目题问前端架构和性能优化", "每道题有why_ask和answer_hint"]
 
 - name: "AI岗位-有RAG"
   input:
@@ -39,11 +47,15 @@
     job_title: "AI应用开发工程师"
   checks:
     required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
-    required_themes: ["LangChain", "Agent", "RAG", "LLM"]
+    required_themes:
+      - ["LangChain", "Agent", "LLM"]
+      - ["RAG", "检索", "向量"]
+      - ["Python"]
+      - ["机器人", "客服", "应用"]
     forbidden_claims: ["前端开发", "iOS", "Android"]
   reference:
-    summary: "有RAG增强，技术题应深入Agent/RAG原理，体现知识库的专业性"
-    key_points: ["技术题覆盖LangChain/Agent/RAG/LangGraph", "RAG知识片段应在题目或提示中出现", "项目题问Agent系统设计经验"]
+    summary: "有RAG增强，技术题应深入Agent/RAG原理"
+    key_points: ["技术题覆盖LangChain/Agent/RAG", "RAG知识片段应在题目或提示中出现"]
 
 - name: "应届生-无RAG"
   input:
@@ -54,8 +66,12 @@
     job_title: "Python后端实习生"
   checks:
     required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
-    required_themes: ["计算机基础", "实习"]
+    required_themes:
+      - ["基础", "算法", "数据结构", "网络"]
+      - ["实习", "应届", "新人", "毕业生"]
+      - ["Python", "Java"]
+      - ["框架", "Web", "Django", "Flask"]
     forbidden_claims: ["架构设计", "团队管理", "技术选型"]
   reference:
-    summary: "应届生岗位，题目应偏基础(数据结构/算法/基础框架)，难度不宜过高"
-    key_points: ["技术题偏基础", "项目题侧重课程项目和学习能力", "每题why_ask面向应届生评价"]
+    summary: "应届生岗位，题目应偏基础，难度不宜过高"
+    key_points: ["技术题偏基础", "项目题侧重课程项目和学习能力"]

@@ -29,3 +29,13 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict[str, Any]:
     if user is None:
         raise credentials_error
     return user
+
+
+def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
+    """管理员专用依赖：非管理员返回 403。"""
+    if not current_user.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user

@@ -29,15 +29,37 @@ def check_structure(output: dict, required_fields: list[str]) -> dict:
     }
 
 
-def check_themes(output_str: str, required_themes: list[str]) -> dict:
-    """检查输出中是否命中要求的关键主题。"""
+def check_themes(output_str: str, required_themes: list) -> dict:
+    """检查输出中是否命中要求的关键主题。
+
+    支持两种格式：
+    - 扁平列表: ["计算机", "实习"] → 每个词独立检查
+    - 同义组: [["计算机","编程基础","科班"], ["实习","项目经验"]] → 每组任一变体命中即算覆盖
+    """
     text = output_str.lower()
-    hits = [t for t in required_themes if t.lower() in text]
+    # 归一化：确保是嵌套列表
+    groups: list[list[str]] = []
+    for item in required_themes:
+        if isinstance(item, str):
+            groups.append([item])  # 扁平词转成单元素组
+        elif isinstance(item, list):
+            groups.append([str(v) for v in item])
+
+    hits: list[str] = []
+    misses: list[str] = []
+    for group in groups:
+        matched = any(variant.lower() in text for variant in group)
+        label = group[0]  # 用第一个词作为显示名
+        if matched:
+            hits.append(label)
+        else:
+            misses.append(label)
+
     return {
-        "total": len(required_themes),
+        "total": len(groups),
         "hits": hits,
-        "misses": [t for t in required_themes if t.lower() not in text],
-        "score": len(hits) / max(len(required_themes), 1),
+        "misses": misses,
+        "score": len(hits) / max(len(groups), 1),
     }
 
 

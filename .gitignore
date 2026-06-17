@@ -2,10 +2,13 @@
 __pycache__/
 *.pyc
 .env
-job_agent.db
 *.db
+*.db-shm
+*.db-wal
 .idea/
 .vscode/
 data/chroma/
 frontend/dist/
-node_modules/evaluation_results/
+frontend/node_modules/
+evaluation_results/
+tests/test.md

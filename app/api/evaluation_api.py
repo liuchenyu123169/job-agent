@@ -4,9 +4,10 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from app.api.deps import get_admin_user
 from app.evaluation.runner import (
     _WORKFLOW_MAP,
     report_to_dict,
@@ -34,6 +35,7 @@ class EvalRunRequest(BaseModel):
 @router.post("/run")
 def run_eval(
     payload: EvalRunRequest,
+    _admin: dict = Depends(get_admin_user),
 ) -> dict:
     """运行评测，返回报告（开发工具，无需登录）。
 

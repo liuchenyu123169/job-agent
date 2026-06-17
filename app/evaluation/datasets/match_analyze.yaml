@@ -8,7 +8,11 @@
     job_title: "Java后端工程师"
   checks:
     required_fields: [match_score, advantages, weaknesses, suggestions]
-    required_themes: ["Spring Boot", "MySQL", "Redis"]
+    required_themes:
+      - ["Spring Boot", "Spring"]
+      - ["MySQL", "数据库"]
+      - ["Redis", "缓存"]
+      - ["分布式", "微服务", "Spring Cloud", "消息队列"]
     forbidden_claims: ["Kubernetes", "高并发实战", "10年以上"]
   reference:
     summary: "匹配度中等(55-75分)，Spring Boot和MySQL是优势，缺少分布式/微服务经验"
@@ -22,7 +26,10 @@
     job_title: "全栈工程师"
   checks:
     required_fields: [match_score, advantages, weaknesses, suggestions]
-    required_themes: ["前端", "Java", "Spring"]
+    required_themes:
+      - ["前端", "React", "TypeScript"]
+      - ["Java", "Spring"]
+      - ["不匹配", "差距", "差异"]
     forbidden_claims: ["后端开发经验", "数据库设计", "微服务"]
   reference:
     summary: "匹配度低(20-40分)，前端经验无法直接迁移到Java全栈，技术栈差异大"
@@ -36,7 +43,10 @@
     job_title: "高级Python后端工程师"
   checks:
     required_fields: [match_score, advantages, weaknesses, suggestions]
-    required_themes: ["FastAPI", "微服务", "Docker", "高并发"]
+    required_themes:
+      - ["FastAPI", "Django"]
+      - ["微服务", "Docker", "Kubernetes", "容器化"]
+      - ["高并发", "千万级", "性能"]
     forbidden_claims: ["不会Python", "无后端经验"]
   reference:
     summary: "匹配度很高(80-95分)，FastAPI/Django和微服务经验与岗位高度吻合"
@@ -50,7 +60,10 @@
     job_title: "后端实习生"
   checks:
     required_fields: [match_score, advantages, weaknesses, suggestions]
-    required_themes: ["计算机", "实习"]
+    required_themes:
+      - ["计算机", "本科", "专业"]
+      - ["实习", "应届", "毕业生", "新人"]
+      - ["基础", "算法", "LeetCode"]
     forbidden_claims: ["多年经验", "主导过", "架构设计"]
   reference:
     summary: "匹配度中等偏低(40-60分)，基础达标但缺乏工程经验，适合实习岗"
@@ -64,7 +77,10 @@
     job_title: "AI工程师"
   checks:
     required_fields: [match_score, advantages, weaknesses, suggestions]
-    required_themes: ["Python", "转行"]
+    required_themes:
+      - ["Python", "编程"]
+      - ["转行", "跨专业", "跨领域", "非科班"]
+      - ["项目", "Kaggle", "实战"]
     forbidden_claims: ["AI项目经验", "深度学习实战", "算法工程师"]
   reference:
     summary: "匹配度低(15-35分)，自学Python但缺少AI项目经验，需要降低目标或补充项目"
@@ -78,7 +94,8 @@
     job_title: "Go后端工程师"
   checks:
     required_fields: [match_score, advantages, weaknesses, suggestions]
-    required_themes: ["Go"]
+    required_themes:
+      - ["Go", "Golang", "gin"]
     forbidden_claims: []
   reference:
     summary: "JD信息太少无法精确评分，应基于有限信息给出保守估计并提示补充JD"

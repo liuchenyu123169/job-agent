@@ -136,6 +136,10 @@ def init_db() -> None:
         conn = get_conn()
         cursor = conn.cursor()
 
+        # 并发优化：WAL 模式 + 写锁等待
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+
         _ensure_user_table(cursor)
 
         cursor.execute(
@@ -236,12 +240,28 @@ def init_db() -> None:
         # 给 copilot_session 加 messages_summary 列（安全迁移）
         _ensure_column(cursor, "copilot_session", "messages_summary", "TEXT")
 
+        # 安全迁移：is_admin 列
+        _ensure_column(cursor, "user", "is_admin", "INTEGER DEFAULT 0")
+
+        # 确保已存在的 default_user 也是管理员 + 有默认密码
+        cursor.execute(
+            "UPDATE user SET is_admin = 1 WHERE id = ? AND (is_admin IS NULL OR is_admin = 0)",
+            (DEFAULT_USER_ID,),
+        )
+
+        from app.core.security import hash_password  # noqa: E402
+        default_pw = hash_password("123456")
         cursor.execute(
             """
-            INSERT OR IGNORE INTO user (id, username, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            INSERT OR IGNORE INTO user (id, username, password_hash, updated_at, is_admin)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, 1)
             """,
-            (DEFAULT_USER_ID, "default_user"),
+            (DEFAULT_USER_ID, "default_user", default_pw),
+        )
+        # 兼容旧数据：如果 password_hash 为空则补上
+        cursor.execute(
+            "UPDATE user SET password_hash = ? WHERE id = ? AND password_hash IS NULL",
+            (default_pw, DEFAULT_USER_ID),
         )
 
         _ensure_user_id_column(cursor, "resume")

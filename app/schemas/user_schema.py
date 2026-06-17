@@ -16,8 +16,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user_id: int
     username: str
+    is_admin: bool = False
 
 
 class CurrentUserResponse(BaseModel):
     id: int
     username: str
+    is_admin: bool = False

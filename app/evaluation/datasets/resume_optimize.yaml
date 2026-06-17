@@ -8,11 +8,14 @@
     job_title: "Java后端工程师"
   checks:
     required_fields: [summary, skill_keywords, project_suggestions, resume_rewrite_suggestions, risk_points]
-    required_themes: ["Spring", "量化", "STAR"]
+    required_themes:
+      - ["Spring", "Spring Cloud", "微服务"]
+      - ["量化", "数据", "指标", "数字"]
+      - ["STAR", "情境", "任务", "行动", "结果"]
     forbidden_claims: ["你没有", "不具备"]
   reference:
     summary: "应给出具体的技能关键词建议、项目描述优化建议、表达改写建议和风险提示"
-    key_points: ["建议补充Spring Cloud/MQ等关键词", "项目经历用STAR重写并加量化数据", "指出分布式经验不足的风险"]
+    key_points: ["建议补充Spring Cloud/MQ等关键词", "项目经历用STAR重写并加量化数据"]
 
 - name: "应届生-简历内容少"
   input:
@@ -22,11 +25,14 @@
     job_title: "Python后端实习生"
   checks:
     required_fields: [summary, skill_keywords, project_suggestions, resume_rewrite_suggestions, risk_points]
-    required_themes: ["项目", "实习"]
+    required_themes:
+      - ["项目", "课程", "升级", "补充"]
+      - ["实习", "开源", "动手", "经验"]
+      - ["技能", "具体", "程度"]
     forbidden_claims: ["工作经验", "团队管理"]
   reference:
     summary: "应届生简历内容少，优化建议应聚焦课程项目升级、技能表达具体化"
-    key_points: ["建议升级课程项目描述(加技术栈/数据/成果)", "技能不要只写'了解'", "风险是缺乏工程经验"]
+    key_points: ["建议升级课程项目描述", "技能不要只写'了解'", "风险是缺乏工程经验"]
 
 - name: "转行-技术栈差异大"
   input:
@@ -36,8 +42,11 @@
     job_title: "Python数据分析师"
   checks:
     required_fields: [summary, skill_keywords, project_suggestions, resume_rewrite_suggestions, risk_points]
-    required_themes: ["转行", "可迁移"]
+    required_themes:
+      - ["转行", "跨专业", "可迁移", "通用"]
+      - ["Python", "SQL", "Pandas"]
+      - ["补充", "学习", "项目", "路径"]
     forbidden_claims: ["精通", "丰富经验"]
   reference:
     summary: "技术栈差异大，应重点挖掘可迁移能力、建议补充目标方向的项目"
-    key_points: ["识别可迁移的通用能力", "不要夸大技术匹配度", "建议补充目标方向的学习路径", "风险是技术栈差距大"]
+    key_points: ["识别可迁移的通用能力", "不要夸大技术匹配度", "建议补充目标方向的学习路径"]

@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.deps import get_admin_user
 from app.rag.rag_service import build_knowledge_base, search_knowledge
 from app.schemas.knowledge_schema import (
     KnowledgeBuildResponse,
@@ -12,7 +13,7 @@ router = APIRouter(prefix="/api/knowledge", tags=["Knowledge"])
 
 
 @router.post("/build", response_model=KnowledgeBuildResponse)
-def build_knowledge() -> KnowledgeBuildResponse:
+def build_knowledge(_admin: dict = Depends(get_admin_user)) -> KnowledgeBuildResponse:
     try:
         result = build_knowledge_base()
     except RuntimeError as exc:
@@ -30,6 +31,7 @@ def build_knowledge() -> KnowledgeBuildResponse:
 def search(
     query: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=20),
+    _admin: dict = Depends(get_admin_user),
 ) -> KnowledgeSearchResponse:
     try:
         items = search_knowledge(query=query, top_k=top_k)

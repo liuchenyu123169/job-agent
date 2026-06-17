@@ -88,7 +88,7 @@ def get_user_by_username(username: str) -> dict[str, Any] | None:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, username, password_hash, created_at, updated_at
+            SELECT id, username, password_hash, is_admin, created_at, updated_at
             FROM user
             WHERE username = ?
             """,
@@ -109,7 +109,7 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, username, password_hash, created_at, updated_at
+            SELECT id, username, password_hash, is_admin, created_at, updated_at
             FROM user
             WHERE id = ?
             """,

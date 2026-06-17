@@ -8,11 +8,16 @@
     job_jd: "Python后端工程师，要求Django/Flask、MySQL、Redis，有RESTful API设计经验。"
     job_title: "Python后端工程师"
   checks:
-    required_themes: ["Python", "Django", "MySQL", "工作经历", "项目经历", "教育背景"]
+    required_themes:
+      - ["Python", "Django"]
+      - ["MySQL", "数据库"]
+      - ["工作经历", "工作经验"]
+      - ["项目经历", "项目经验"]
+      - ["教育背景", "学历"]
     forbidden_claims: ["FastAPI", "微服务", "高并发", "团队管理", "架构设计"]
   reference:
-    summary: "基于简短自由文本展开成完整简历，合理推断但不过度编造，信息缺失处标注[待补充]"
-    key_points: ["把一句话经历展开成STAR完整描述", "熟悉Django应展开为具体技术能力", "做过电商后台应展开为项目描述", "用户没说的技能不能编造"]
+    summary: "基于简短自由文本展开成完整简历，合理推断但不过度编造"
+    key_points: ["把一句话经历展开成STAR完整描述", "用户没说的技能不能编造"]
 
 - name: "信息极简-仅一句话"
   input:
@@ -22,11 +27,16 @@
     job_jd: "Java初级开发工程师，要求Java基础、了解Spring框架、有数据库基础。"
     job_title: "Java初级开发工程师"
   checks:
-    required_themes: ["Java", "Python", "计算机", "教育背景", "个人技能"]
+    required_themes:
+      - ["Java"]
+      - ["Python"]
+      - ["计算机", "专业"]
+      - ["教育背景", "学历", "学校"]
+      - ["个人技能", "技能"]
     forbidden_claims: ["项目经历", "工作经验", "精通", "多年"]
   reference:
-    summary: "输入极少时，应基于专业背景合理扩展技能描述，经历/项目不可编造，标注待补充"
-    key_points: ["技能描述可以合理扩展", "教育背景可以展开(补相关课程)", "不可编造工作经历和项目经历", "大量使用[待补充]标记缺失信息"]
+    summary: "输入极少时，应基于专业背景合理扩展技能描述，不可编造经历"
+    key_points: ["技能描述可以合理扩展", "不可编造工作经历和项目经历", "大量使用[待补充]标记缺失信息"]
 
 - name: "有简历-Java后端生成"
   input:
@@ -35,8 +45,14 @@
     job_jd: "高级Java后端工程师，要求Spring Boot/Spring Cloud、MySQL优化、分布式系统设计、有团队协作经验。"
     job_title: "高级Java后端工程师"
   checks:
-    required_themes: ["Java", "Spring", "工作经历", "项目经历", "教育背景", "个人技能", "自我评价"]
+    required_themes:
+      - ["Java", "Spring"]
+      - ["工作经历", "工作经验"]
+      - ["项目经历", "项目经验"]
+      - ["教育背景", "学历"]
+      - ["个人技能", "技能"]
+      - ["自我评价", "个人优势"]
     forbidden_claims: ["10年", "架构师", "CTO"]
   reference:
-    summary: "基于已有简历内容生成完整优化的Markdown简历，不编造经历"
-    key_points: ["必须含个人信息/技能/工作经历/项目经历/教育/自我评价6模块", "工作经历用STAR展开含量化数据", "技能按JD匹配度排序", "自我评价具体到岗位"]
+    summary: "基于已有简历内容生成完整优化的Markdown简历"
+    key_points: ["必须含个人信息/技能/工作经历/项目经历/教育/自我评价6模块", "工作经历用STAR展开含量化数据"]

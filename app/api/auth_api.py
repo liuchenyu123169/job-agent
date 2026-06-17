@@ -15,11 +15,17 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 
 def _build_token_response(user: dict) -> TokenResponse:
-    access_token = create_access_token({"user_id": int(user["id"]), "username": user["username"]})
+    is_admin = bool(user.get("is_admin", False))
+    access_token = create_access_token({
+        "user_id": int(user["id"]),
+        "username": user["username"],
+        "is_admin": is_admin,
+    })
     return TokenResponse(
         access_token=access_token,
         user_id=int(user["id"]),
         username=str(user["username"]),
+        is_admin=is_admin,
     )
 
 
@@ -46,4 +52,8 @@ def login(payload: LoginRequest) -> TokenResponse:
 
 @router.get("/me", response_model=CurrentUserResponse)
 def me(current_user: dict = Depends(get_current_user)) -> CurrentUserResponse:
-    return CurrentUserResponse(id=int(current_user["id"]), username=str(current_user["username"]))
+    return CurrentUserResponse(
+        id=int(current_user["id"]),
+        username=str(current_user["username"]),
+        is_admin=bool(current_user.get("is_admin", False)),
+    )
