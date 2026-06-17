@@ -8,4 +8,4 @@ job_agent.db
 .vscode/
 data/chroma/
 frontend/dist/
-node_modules/
+node_modules/evaluation_results/

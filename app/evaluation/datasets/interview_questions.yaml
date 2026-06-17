@@ -1,0 +1,61 @@
+# 面试题生成评测集
+
+- name: "Java后端-有RAG知识"
+  input:
+    user_id: 1
+    enable_rag: true
+    resume_content: "3年Java开发，Spring Boot+MyBatis+MySQL+Redis，做过企业CRM和订单系统。"
+    job_jd: "Java后端工程师，要求Spring Boot、MySQL、Redis，有分布式和微服务经验优先。"
+    job_title: "Java后端工程师"
+  checks:
+    required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    required_themes: ["Spring", "Java", "Redis"]
+    forbidden_claims: ["前端", "React", "Vue"]
+  reference:
+    summary: "应生成4类面试题共8-10道，技术题侧重Java/Spring/中间件，有RAG知识增强"
+    key_points: ["至少4道技术题", "至少1道项目题", "至少1道行为题", "至少1道风险题", "RAG知识应体现在why_ask或answer_hint中"]
+
+- name: "前端岗位-无RAG"
+  input:
+    user_id: 1
+    enable_rag: false
+    resume_content: "2年React+TypeScript前端，做过公司官网和后台管理系统，熟悉Webpack和Vite。"
+    job_jd: "前端工程师，要求React、TypeScript、Node.js，有性能优化经验优先。"
+    job_title: "前端工程师"
+  checks:
+    required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    required_themes: ["React", "TypeScript", "前端"]
+    forbidden_claims: ["Spring", "Django", "后端架构"]
+  reference:
+    summary: "应生成4类面试题，技术题侧重React/TS/前端工程化，无RAG时题目数量可以略少"
+    key_points: ["技术题围绕React和TypeScript", "项目题问前端架构和性能优化", "行为题问跨团队协作", "每道题有why_ask和answer_hint"]
+
+- name: "AI岗位-有RAG"
+  input:
+    user_id: 1
+    enable_rag: true
+    resume_content: "2年Python后端+AI开发，做过基于LangChain的客服机器人，熟悉RAG和向量数据库。"
+    job_jd: "AI应用开发工程师，要求Python、LangChain/LlamaIndex、RAG、Agent开发经验。"
+    job_title: "AI应用开发工程师"
+  checks:
+    required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    required_themes: ["LangChain", "Agent", "RAG", "LLM"]
+    forbidden_claims: ["前端开发", "iOS", "Android"]
+  reference:
+    summary: "有RAG增强，技术题应深入Agent/RAG原理，体现知识库的专业性"
+    key_points: ["技术题覆盖LangChain/Agent/RAG/LangGraph", "RAG知识片段应在题目或提示中出现", "项目题问Agent系统设计经验"]
+
+- name: "应届生-无RAG"
+  input:
+    user_id: 1
+    enable_rag: false
+    resume_content: "计算机本科应届生，Python和Java都学过，课程项目有在线商城和博客系统，LeetCode 150题。"
+    job_jd: "Python后端实习生，要求计算机基础扎实，熟悉一种Web框架，有实际编码能力。"
+    job_title: "Python后端实习生"
+  checks:
+    required_fields: [technical_questions, project_questions, behavior_questions, risk_questions]
+    required_themes: ["计算机基础", "实习"]
+    forbidden_claims: ["架构设计", "团队管理", "技术选型"]
+  reference:
+    summary: "应届生岗位，题目应偏基础(数据结构/算法/基础框架)，难度不宜过高"
+    key_points: ["技术题偏基础", "项目题侧重课程项目和学习能力", "每题why_ask面向应届生评价"]

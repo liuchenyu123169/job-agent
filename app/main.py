@@ -5,6 +5,7 @@ from app.api.knowledge_api import router as knowledge_router
 from app.api.resume_api import router as resume_router
 from app.api.job_api import router as job_router
 from app.api.copilot_api import router as copilot_router
+from app.api.evaluation_api import router as evaluation_router
 from app.api.task_api import router as task_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import check_jwt_secret
@@ -29,6 +30,7 @@ app.include_router(knowledge_router)
 app.include_router(resume_router)
 app.include_router(job_router)
 app.include_router(copilot_router)
+app.include_router(evaluation_router)
 app.include_router(task_router)
 
 

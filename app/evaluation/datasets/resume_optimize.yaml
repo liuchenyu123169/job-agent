@@ -1,0 +1,43 @@
+# 简历优化评测集
+
+- name: "Java后端-中等经验"
+  input:
+    user_id: 1
+    resume_content: "3年Java开发经验，Spring Boot+MyBatis，做过CRM系统，了解MySQL和Redis。"
+    job_jd: "Java后端工程师，要求Spring Boot、MySQL、Redis，有分布式经验优先。"
+    job_title: "Java后端工程师"
+  checks:
+    required_fields: [summary, skill_keywords, project_suggestions, resume_rewrite_suggestions, risk_points]
+    required_themes: ["Spring", "量化", "STAR"]
+    forbidden_claims: ["你没有", "不具备"]
+  reference:
+    summary: "应给出具体的技能关键词建议、项目描述优化建议、表达改写建议和风险提示"
+    key_points: ["建议补充Spring Cloud/MQ等关键词", "项目经历用STAR重写并加量化数据", "指出分布式经验不足的风险"]
+
+- name: "应届生-简历内容少"
+  input:
+    user_id: 1
+    resume_content: "计算机本科应届生，Python和Java都学过，课程项目有在线商城和博客系统。"
+    job_jd: "Python后端实习生，要求计算机基础扎实，熟悉一种Web框架，有实际编码能力。"
+    job_title: "Python后端实习生"
+  checks:
+    required_fields: [summary, skill_keywords, project_suggestions, resume_rewrite_suggestions, risk_points]
+    required_themes: ["项目", "实习"]
+    forbidden_claims: ["工作经验", "团队管理"]
+  reference:
+    summary: "应届生简历内容少，优化建议应聚焦课程项目升级、技能表达具体化"
+    key_points: ["建议升级课程项目描述(加技术栈/数据/成果)", "技能不要只写'了解'", "风险是缺乏工程经验"]
+
+- name: "转行-技术栈差异大"
+  input:
+    user_id: 1
+    resume_content: "机械工程硕士，自学Python半年，完成过吴恩达ML课程，在Kaggle打过比赛。"
+    job_jd: "Python数据分析师，要求Python熟练、有SQL经验、熟悉Pandas和Matplotlib。"
+    job_title: "Python数据分析师"
+  checks:
+    required_fields: [summary, skill_keywords, project_suggestions, resume_rewrite_suggestions, risk_points]
+    required_themes: ["转行", "可迁移"]
+    forbidden_claims: ["精通", "丰富经验"]
+  reference:
+    summary: "技术栈差异大，应重点挖掘可迁移能力、建议补充目标方向的项目"
+    key_points: ["识别可迁移的通用能力", "不要夸大技术匹配度", "建议补充目标方向的学习路径", "风险是技术栈差距大"]

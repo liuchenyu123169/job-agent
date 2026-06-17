@@ -1,0 +1,85 @@
+# 匹配分析评测集
+
+- name: "Java后端-中等匹配"
+  input:
+    user_id: 1
+    resume_content: "3年Java开发经验，Spring Boot+MyBatis，做过CRM系统，了解MySQL和Redis。"
+    job_jd: "Java后端工程师，要求Spring Boot、MySQL、Redis，有分布式经验优先。"
+    job_title: "Java后端工程师"
+  checks:
+    required_fields: [match_score, advantages, weaknesses, suggestions]
+    required_themes: ["Spring Boot", "MySQL", "Redis"]
+    forbidden_claims: ["Kubernetes", "高并发实战", "10年以上"]
+  reference:
+    summary: "匹配度中等(55-75分)，Spring Boot和MySQL是优势，缺少分布式/微服务经验"
+    key_points: ["Spring Boot加分", "缺少微服务和分布式经验", "建议补Spring Cloud或消息队列", "量化CRM项目指标"]
+
+- name: "前端转全栈-弱匹配"
+  input:
+    user_id: 1
+    resume_content: "2年React前端开发经验，熟悉TypeScript和Webpack，写过简单的Express API。"
+    job_jd: "全栈工程师，精通Java Spring Boot后端开发，有数据库设计经验，熟悉AWS部署。"
+    job_title: "全栈工程师"
+  checks:
+    required_fields: [match_score, advantages, weaknesses, suggestions]
+    required_themes: ["前端", "Java", "Spring"]
+    forbidden_claims: ["后端开发经验", "数据库设计", "微服务"]
+  reference:
+    summary: "匹配度低(20-40分)，前端经验无法直接迁移到Java全栈，技术栈差异大"
+    key_points: ["React前端经验与全栈要求不匹配", "缺少Java和Spring Boot经验", "建议从前端岗位切入或系统学习Java"]
+
+- name: "完全匹配-高分案例"
+  input:
+    user_id: 1
+    resume_content: "5年Python后端开发，精通FastAPI和Django，有微服务架构设计经验。熟练使用Docker和Kubernetes，参与过日均千万级请求的API平台。"
+    job_jd: "高级Python后端工程师，精通FastAPI/Django，有微服务和容器化经验，有高并发系统设计经验。"
+    job_title: "高级Python后端工程师"
+  checks:
+    required_fields: [match_score, advantages, weaknesses, suggestions]
+    required_themes: ["FastAPI", "微服务", "Docker", "高并发"]
+    forbidden_claims: ["不会Python", "无后端经验"]
+  reference:
+    summary: "匹配度很高(80-95分)，FastAPI/Django和微服务经验与岗位高度吻合"
+    key_points: ["FastAPI/Django经验直接匹配", "微服务和容器化经验加分", "高并发实战是核心亮点"]
+
+- name: "应届生-实习岗位"
+  input:
+    user_id: 1
+    resume_content: "计算机本科应届生，学过Java和Python，做过课程项目(在线商城、博客系统)，LeetCode 200题。"
+    job_jd: "Java/Python后端实习生，要求计算机基础扎实，熟悉一种Web框架，有实际编码能力。"
+    job_title: "后端实习生"
+  checks:
+    required_fields: [match_score, advantages, weaknesses, suggestions]
+    required_themes: ["计算机", "实习"]
+    forbidden_claims: ["多年经验", "主导过", "架构设计"]
+  reference:
+    summary: "匹配度中等偏低(40-60分)，基础达标但缺乏工程经验，适合实习岗"
+    key_points: ["计算机基础扎实", "缺少实际项目经验", "课程项目需升级描述"]
+
+- name: "跨界转行-机械到AI"
+  input:
+    user_id: 1
+    resume_content: "机械工程硕士，自学Python半年，完成过吴恩达ML课程，在Kaggle打过Titanic和房价预测比赛。"
+    job_jd: "AI工程师，要求Python熟练、有深度学习项目经验、熟悉PyTorch或TensorFlow。"
+    job_title: "AI工程师"
+  checks:
+    required_fields: [match_score, advantages, weaknesses, suggestions]
+    required_themes: ["Python", "转行"]
+    forbidden_claims: ["AI项目经验", "深度学习实战", "算法工程师"]
+  reference:
+    summary: "匹配度低(15-35分)，自学Python但缺少AI项目经验，需要降低目标或补充项目"
+    key_points: ["Python基础可用但不足以胜任AI岗", "完全没有AI/ML项目经验", "建议从数据分析或Python开发切入"]
+
+- name: "JD信息极简"
+  input:
+    user_id: 1
+    resume_content: "4年Go后端开发，熟悉gin和gRPC，做过微服务拆分。"
+    job_jd: "Go后端工程师"
+    job_title: "Go后端工程师"
+  checks:
+    required_fields: [match_score, advantages, weaknesses, suggestions]
+    required_themes: ["Go"]
+    forbidden_claims: []
+  reference:
+    summary: "JD信息太少无法精确评分，应基于有限信息给出保守估计并提示补充JD"
+    key_points: ["JD信息不足影响分析精度", "应提示用户补充完整JD", "基于Go语言做基本判断"]
