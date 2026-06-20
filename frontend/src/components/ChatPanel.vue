@@ -1,6 +1,6 @@
 <script setup>
 import { inject, ref, nextTick, onMounted } from "vue";
-import { normalizeToArray } from "./utils.js";
+import { normalizeToArray, normalizeOutputFields, COPILOT_REPORT_MARKER } from "./utils.js";
 
 const api = inject("api");
 const setMessage = inject("setMessage");
@@ -44,8 +44,40 @@ function convertHistoryToMessages(historyMsgs) {
   for (const m of historyMsgs) {
     if (m.role === "user" || m.role === "human") {
       result.push({ role: "user", text: m.content || "" });
-    } else if (m.role === "copilot") {
-      result.push({ role: "copilot", text: m.content || "" });
+    } else if (m.role === "copilot" || m.role === "assistant") {
+      const content = m.content || "";
+      // 检测结构化报告标记
+      if (content.startsWith(COPILOT_REPORT_MARKER)) {
+        try {
+          const report = JSON.parse(content.slice(COPILOT_REPORT_MARKER.length));
+          const copilotMsg = { role: "copilot", steps: [], final: report, error: null };
+          for (const rawStep of report.steps || []) {
+            // 包装为 { summary: rawStep } 匹配 live SSE 的 s.summary = data.result 结构
+            const s = { tool: rawStep.tool, status: "done", summary: rawStep };
+            preNormalize(s);
+            copilotMsg.steps.push(s);
+          }
+          result.push(copilotMsg);
+        } catch {
+          // JSON 解析失败 → 剥离标记前缀，不泄漏原始标记给用户
+          result.push({ role: "copilot", text: content.slice(COPILOT_REPORT_MARKER.length) });
+        }
+      } else {
+        result.push({ role: "copilot", text: content });
+      }
+    } else if (m.role === "tool") {
+      // 工具调用结果：折叠显示
+      const content = m.content || "";
+      const preview = content.length > 200 ? content.slice(0, 200) + "…" : content;
+      const label = m.tool_name ? `[${m.tool_name}] ` : "[工具结果] ";
+      result.push({
+        role: "copilot",
+        text: label + preview,
+        isToolResult: true,
+        toolContent: content,
+        toolName: m.tool_name || "",
+        _collapsed: true,
+      });
     }
   }
   return result;
@@ -72,20 +104,7 @@ const container = ref(null);
 /* ── 步骤结果预处理 ── */
 function preNormalize(step) {
   if (!step || !step.summary) return;
-  const s = step.summary;
-  ["advantages", "weaknesses", "suggestions"].forEach(k => {
-    if (s.analysis && s.analysis[k] !== undefined) s.analysis[k] = normalizeToArray(s.analysis[k]);
-  });
-  if (s.optimization) {
-    ["skill_keywords", "project_suggestions", "resume_rewrite_suggestions", "risk_points"].forEach(k => {
-      if (s.optimization[k] !== undefined) s.optimization[k] = normalizeToArray(s.optimization[k]);
-    });
-  }
-  if (s.questions) {
-    ["technical_questions", "project_questions", "behavior_questions", "risk_questions"].forEach(k => {
-      if (s.questions[k] !== undefined) s.questions[k] = normalizeToArray(s.questions[k]);
-    });
-  }
+  Object.assign(step.summary, normalizeOutputFields(step.summary));
 }
 
 /* ── 消息操作 ── */
@@ -154,6 +173,12 @@ function send() {
 
   cancelFn.value = api.copilotApi.streamRun(payload,
     {
+      // 从 HTTP 响应头立即拿到 session_id，不等 final 事件
+      onSessionCreated(sessionId) {
+        if (sessionId && sessionId !== currentSessionId.value) {
+          storeSessionId(sessionId);
+        }
+      },
       onStepStart(data) {
         const label = (toolMetaMap.value[data.tool] || {}).description || data.tool;
         copilotMsg.steps.push({ tool: data.tool, label, status: "running", summary: null, error: null });
@@ -169,12 +194,12 @@ function send() {
       },
       onFinal(data) {
         copilotMsg.final = data;
-        // 保存会话 ID（首次对话时后端返回）
-        if (data.session_id && !currentSessionId.value) {
+        // 保存/更新会话 ID（首次对话时后端返回；重试时覆盖旧值）
+        if (data.session_id && data.session_id !== currentSessionId.value) {
           storeSessionId(data.session_id);
         }
         running.value = false;
-        fetchTasks();
+        Promise.all([fetchTasks(), loadSessions()]);  // 并行刷新任务列表 + 侧边栏
       },
       onError(err) {
         copilotMsg.error = typeof err === "string" ? err : JSON.stringify(err);
@@ -200,8 +225,18 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
         <div v-if="msg.role === 'user'" class="msg-bubble user-bubble">{{ msg.text }}</div>
 
         <!-- Copilot 文本消息 -->
-        <div v-else-if="msg.text && !msg.steps" class="msg-bubble copilot-bubble">
+        <div v-else-if="msg.text && !msg.steps && !msg.isToolResult" class="msg-bubble copilot-bubble">
           <div class="msg-text" v-html="msg.text.replace(/\n/g, '<br>')"></div>
+        </div>
+
+        <!-- 工具结果（可折叠） -->
+        <div v-else-if="msg.isToolResult" class="msg-bubble tool-bubble" @click="msg._collapsed = !msg._collapsed">
+          <div class="tool-summary">
+            <span class="tool-icon">🔧</span>
+            <span class="tool-label">{{ msg.toolName || '工具结果' }}</span>
+            <span class="tool-expand-hint">{{ msg._collapsed ? '点击展开' : '点击收起' }}</span>
+          </div>
+          <pre v-if="!msg._collapsed" class="tool-content">{{ msg.toolContent }}</pre>
         </div>
 
         <!-- Copilot 步骤消息 -->

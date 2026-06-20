@@ -42,69 +42,103 @@ def summarize_result(
 
 
 # ── 各工具的摘要提取（结构化 + 文本） ──
+# 注意：这里按数据结构检测而非按 tool_name 匹配。
+# 因为在 direct agent 路径中，tool_name 是 agent 名（如 "resume_agent"）而非工具名（如 "match_analyze"）。
 
 def _summarize_step(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
-    """对单个工具的执行结果生成精简的结构化摘要。"""
-    base = {"tool": tool_name, "task_id": result.get("task_id")}
+    """对单个工具/Agent 的执行结果生成结构化摘要。
 
-    if tool_name == "match_analyze":
-        analysis = result.get("analysis") or {}
+    除计算元数据外，还保留原始数据字段（供前端重建 step card）。
+    """
+    base: dict[str, Any] = {"tool": tool_name, "task_id": result.get("task_id")}
+
+    # ── 按数据结构检测结果类型 ──
+    analysis = result.get("analysis") or {}
+    optimization = result.get("optimization") or {}
+    questions = result.get("questions") or {}
+    generated_resume = result.get("generated_resume") or ""
+    items = result.get("items") or []
+    knowledge_count = result.get("count") or result.get("knowledge_count")
+
+    if analysis:
         base["match_score"] = analysis.get("match_score")
         base["advantages_count"] = len(analysis.get("advantages") or [])
         base["weaknesses_count"] = len(analysis.get("weaknesses") or [])
-    elif tool_name == "optimize_resume":
-        optimization = result.get("optimization") or {}
+        base["analysis"] = analysis  # 保留原始数据供前端重建
+
+    if optimization:
         base["has_skill_keywords"] = bool(optimization.get("skill_keywords"))
         base["has_rewrite_suggestions"] = bool(optimization.get("resume_rewrite_suggestions"))
-    elif tool_name == "generate_interview_questions":
-        questions = result.get("questions") or {}
+        base["optimization"] = optimization
+
+    if questions:
         base["tech_count"] = len(questions.get("technical_questions") or [])
         base["project_count"] = len(questions.get("project_questions") or [])
         base["behavior_count"] = len(questions.get("behavior_questions") or [])
         base["risk_count"] = len(questions.get("risk_questions") or [])
-    elif tool_name == "recommend_jobs":
-        items = result.get("items") or []
+        base["questions"] = questions
+
+    if generated_resume:
+        base["resume_length"] = len(generated_resume)
+        base["resume_preview"] = generated_resume[:200]
+        base["generated_resume"] = generated_resume
+
+    if items:
         base["candidate_count"] = result.get("candidate_job_count", len(items))
         base["top_match_score"] = items[0]["match_score"] if items else None
-    elif tool_name == "generate_resume":
-        resume_text = result.get("generated_resume") or ""
-        base["resume_length"] = len(resume_text)
-        base["resume_preview"] = resume_text[:200]
-    elif tool_name == "search_knowledge":
-        base["hit_count"] = result.get("count", 0)
-    elif tool_name in ("list_resumes", "list_jobs"):
-        base["item_count"] = result.get("count", 0)
+        base["items"] = items
+
+    if knowledge_count:
+        base["hit_count"] = knowledge_count
 
     return base
 
 
 def _step_text(tool_name: str, data: dict[str, Any]) -> str | None:
-    """从单个工具结果提取一行可读文本摘要（供 SSE final 事件使用）。"""
-    if tool_name == "match_analyze":
-        score = (data.get("analysis") or {}).get("match_score")
-        return f"匹配度 {score} 分" if score is not None else None
-    if tool_name == "optimize_resume":
-        opt = data.get("optimization") or {}
-        summary = opt.get("summary")
-        return f"简历优化：{str(summary)[:80]}" if summary else None
-    if tool_name == "generate_interview_questions":
-        qs = data.get("questions") or {}
-        tech = len(qs.get("technical_questions") or [])
-        proj = len(qs.get("project_questions") or [])
-        total = tech + proj + len(qs.get("behavior_questions") or []) + len(qs.get("risk_questions") or [])
-        return f"面试题 {total} 道（技术{tech}/项目{proj}）" if total else None
-    if tool_name == "recommend_jobs":
-        items = data.get("items") or []
-        return f"推荐 {len(items)} 个岗位" if items else None
-    if tool_name == "generate_resume":
-        resume_text = data.get("generated_resume") or ""
-        lines = resume_text.strip().split("\n")
+    """从单个工具/Agent 结果提取一行可读文本摘要（供 SSE final 事件使用）。
+
+    按数据内容检测，不按工具名称匹配。
+    """
+    # ── 匹配分析 ──
+    analysis = data.get("analysis") or {}
+    if analysis.get("match_score") is not None:
+        return f"匹配度 {analysis['match_score']} 分"
+
+    # ── 简历优化 ──
+    optimization = data.get("optimization") or {}
+    if optimization.get("summary"):
+        return f"简历优化：{str(optimization['summary'])[:80]}"
+
+    # ── 面试题 ──
+    questions = data.get("questions") or {}
+    if questions:
+        tech = len(questions.get("technical_questions") or [])
+        proj = len(questions.get("project_questions") or [])
+        behav = len(questions.get("behavior_questions") or [])
+        risk = len(questions.get("risk_questions") or [])
+        total = tech + proj + behav + risk
+        if total:
+            return f"面试题 {total} 道（技术{tech}/项目{proj}）"
+
+    # ── 岗位推荐 ──
+    items = data.get("items") or []
+    if items:
+        return f"推荐 {len(items)} 个岗位"
+
+    # ── 简历生成 ──
+    generated_resume = data.get("generated_resume") or ""
+    if generated_resume:
+        lines = generated_resume.strip().split("\n")
         title_line = next((l.strip("# ").strip() for l in lines if l.strip()), "")
-        return f"简历已生成：{title_line[:80]}" if title_line else f"简历已生成（{len(resume_text)} 字符）"
-    if tool_name == "search_knowledge":
-        count = data.get("count", 0)
-        return f"检索到 {count} 条知识" if count else None
-    if tool_name in ("list_resumes", "list_jobs"):
-        count = data.get("count", 0)
-        return f"查询到 {count} 条记录" if count else None
+        return f"简历已生成：{title_line[:80]}" if title_line else f"简历已生成（{len(generated_resume)} 字符）"
+
+    # ── 知识检索 ──
+    count = data.get("count") or data.get("knowledge_count")
+    if count:
+        return f"检索到 {count} 条知识"
+
+    # ── 列表查询 ──
+    if data.get("count") is not None and data.get("items") is not None:
+        return f"查询到 {data['count']} 条记录"
+
     return None

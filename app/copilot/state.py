@@ -18,6 +18,9 @@ class PipelineContext:
     job_id: int | None = None
     personal_info: str | None = None
 
+    # 用户意图
+    goal: str | None = None
+
     # 会话相关
     session_id: int | None = None
     messages_summary: str | None = None

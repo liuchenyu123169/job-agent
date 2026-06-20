@@ -61,8 +61,8 @@ def _run_optimize_node(state: AgentAnalyzeState) -> dict[str, Any]:
         return {"error_msg": result["error_msg"]}
     return {
         "optimization": result.get("optimization"),
+        "task_id": result.get("task_id"),
     }
-
 
 def _route_after_match(state: AgentAnalyzeState) -> str:
     return END if state.get("error_msg") else "run_optimize"

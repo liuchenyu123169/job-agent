@@ -64,6 +64,21 @@ async function newChat() {
   }
 }
 
+async function deleteSession(sessionId, event) {
+  event.stopPropagation(); // 避免触发 selectSession
+  if (!confirm("确认删除此对话？")) return;
+  try {
+    await copilotApi.deleteSession(sessionId);
+    // 删除的是当前会话 → 切回欢迎页
+    if (currentSessionId.value === sessionId) {
+      newChat();
+    }
+    await loadSessions();
+  } catch (err) {
+    setMessage(getErrorMessage(err), true);
+  }
+}
+
 function truncateGoal(goal, maxLen = 18) {
   if (!goal) return '新对话';
   return goal.length > maxLen ? goal.slice(0, maxLen) + '...' : goal;
@@ -241,10 +256,22 @@ provide("newChat", newChat);
 provide("loadSessions", loadSessions);
 provide("storeSessionId", storeSessionId);
 
-onMounted(() => {
+onMounted(async () => {
   setUnauthorizedHandler(() => clearSession());
-  restoreSession();
-  loadSessions();
+  await Promise.all([restoreSession(), loadSessions()]);
+
+  // 自动恢复最近会话
+  if (currentSessionId.value) {
+    const found = sessions.value.find(s => s.id === currentSessionId.value);
+    if (!found) {
+      localStorage.removeItem("currentSessionId");
+      currentSessionId.value = null;
+    }
+  }
+  if (!currentSessionId.value && sessions.value.length > 0) {
+    const recent = sessions.value.find(s => s.status !== "ERROR") || sessions.value[0];
+    if (recent) await selectSession(recent.id);
+  }
 });
 onUnmounted(() => setUnauthorizedHandler(null));
 </script>
@@ -287,6 +314,7 @@ onUnmounted(() => setUnauthorizedHandler(null));
                   @click="selectSession(s.id)">
                   <span class="session-goal">{{ truncateGoal(s.goal) }}</span>
                   <span class="session-date">{{ (s.created_at || '').slice(0, 10) }}</span>
+                  <span class="session-delete" @click="deleteSession(s.id, $event)" title="删除此对话">✕</span>
                 </button>
               </div>
             </div>
@@ -396,6 +424,14 @@ onUnmounted(() => setUnauthorizedHandler(null));
 .session-goal { line-height: 1.4; }
 .session-date { font-size: 10px; color: #64748b; }
 .session-item.active .session-date { color: #93c5fd; }
+.session-delete {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  opacity: 0; font-size: 10px; color: #ef4444; padding: 2px 5px; border-radius: 4px;
+  transition: opacity 0.15s; line-height: 1;
+}
+.session-item { position: relative; }
+.session-item:hover .session-delete { opacity: 0.7; }
+.session-item .session-delete:hover { opacity: 1; background: rgba(239, 68, 68, 0.15); }
 
 /* ── 主视图 ── */
 .main-shell { margin-left: 220px; width: calc(100% - 220px); min-height: 100vh; display: flex; flex-direction: column; position: relative; }
@@ -482,6 +518,12 @@ onUnmounted(() => setUnauthorizedHandler(null));
 :global(.msg-bubble) { padding: 12px 16px; border-radius: 16px; font-size: 14px; line-height: 1.7; }
 :global(.user-bubble) { background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
 :global(.copilot-bubble) { background: #fff; border: 1px solid #e5e7eb; border-bottom-left-radius: 4px; }
+:global(.tool-bubble) { background: #fffbeb; border: 1px dashed #fcd34d; cursor: pointer; padding: 8px 14px; border-radius: 12px; }
+:global(.tool-summary) { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #92400e; }
+:global(.tool-icon) { font-size: 14px; }
+:global(.tool-label) { font-weight: 600; }
+:global(.tool-expand-hint) { margin-left: auto; font-size: 10px; color: #b45309; }
+:global(.tool-content) { margin-top: 8px; font-size: 11px; max-height: 200px; overflow: auto; background: #fef3c7; padding: 8px; border-radius: 8px; white-space: pre-wrap; word-break: break-all; }
 :global(.msg-card) { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 16px; width: 100%; }
 :global(.msg-card-title) { font-weight: 700; margin-bottom: 10px; font-size: 14px; }
 :global(.step-block) { margin-bottom: 10px; }
@@ -501,6 +543,10 @@ onUnmounted(() => setUnauthorizedHandler(null));
 :global(.question-item strong) { display: block; font-size: 13px; color: #0f172a; margin-bottom: 4px; }
 :global(.question-item small) { display: block; color: #64748b; font-size: 12px; line-height: 1.6; margin-top: 2px; }
 :global(.question-item small em) { color: #94a3b8; font-style: normal; margin-right: 4px; }
+:global(.result-sections) { display: flex; flex-direction: column; gap: 16px; }
+:global(.result-sections .step-detail) { margin-top: 0; }
+:global(.generated-resume-text) { font-size: 13px; line-height: 1.8; color: #334155; max-height: 500px; overflow: auto; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e5e7eb; }
+:global(.error-block) { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
 :global(.msg-final) { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e5e7eb; }
 :global(.msg-final p) { margin: 0 0 6px; font-size: 14px; }
 :global(.msg-error) { color: #b91c1c; font-size: 13px; margin-top: 6px; }

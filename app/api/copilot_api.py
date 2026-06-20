@@ -7,8 +7,11 @@
 多轮对话：通过 session_id 续接已有会话，自动加载历史消息。
 """
 
+import json
 import logging
 from typing import AsyncGenerator
+
+_REPORT_MARKER = "__COPILOT_REPORT__"
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -69,6 +72,7 @@ async def copilot_run(
         resume_id=payload.resume_id,
         job_id=payload.job_id,
         personal_info=payload.personal_info,
+        goal=payload.goal,
     )
 
     # ── 会话管理：加载历史或创建新会话 ──
@@ -77,14 +81,22 @@ async def copilot_run(
     if payload.session_id:
         session = get_copilot_session(payload.session_id, user_id=user_id)
         if session is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-        session_id = payload.session_id
-        context.session_id = session_id
-        context.messages_summary = session.get("messages_summary")
+            # 会话已被删除或数据库重建 → 静默降级为新建，前端在响应头 X-Session-Id 拿到新 ID
+            logger.warning(
+                "[Copilot] stale session_id=%s for user=%d, auto-creating new session",
+                payload.session_id, user_id,
+            )
+            session = create_copilot_session(goal=payload.goal, user_id=user_id)
+            session_id = int(session["id"])
+            context.session_id = session_id
+        else:
+            session_id = payload.session_id
+            context.session_id = session_id
+            context.messages_summary = session.get("messages_summary")
 
-        # 加载历史消息（Coordinator 路径使用）
-        history_messages = conversation_manager.load_history(session_id, user_id, system_prompt="")
-        logger.info("[Copilot] resume session=%d, %d history messages", session_id, len(history_messages))
+            # 加载历史消息（Coordinator 路径使用）
+            history_messages = conversation_manager.load_history(session_id, user_id, system_prompt="")
+            logger.info("[Copilot] resume session=%d, %d history messages", session_id, len(history_messages))
     else:
         session = create_copilot_session(goal=payload.goal, user_id=user_id)
         session_id = int(session["id"])
@@ -145,6 +157,16 @@ def _merge_tools(skills) -> list[str]:
     return result
 
 
+def _save_report(session_id, user_id, report, preexisting_messages=None, goal=None):
+    """将报告序列化并存入 conversation_messages，供前端恢复 step card。"""
+    messages = list(preexisting_messages) if preexisting_messages else []
+    if goal:
+        messages.insert(0, HumanMessage(content=goal))
+    report_json = json.dumps(report, ensure_ascii=False)
+    messages.append(AIMessage(content=_REPORT_MARKER + report_json))
+    conversation_manager.save_messages(session_id, user_id, messages)
+
+
 # ═══════════════════════════════════════════════════════════════
 # 路径 1: 意图明确 → 直接跑子 Agent，零 LLM 路由
 # ═══════════════════════════════════════════════════════════════
@@ -184,14 +206,9 @@ async def _direct_agents(
             else:
                 yield error_event(name, result.get("error") or "unknown error")
 
-        # 保存对话消息（direct 路径也记录到会话历史）
-        conversation_manager.save_messages(
-            session_id, user_id,
-            [HumanMessage(content=f"执行任务：{', '.join(agent_names)}")],
-        )
-
         report = summarize_result(context)
         report["session_id"] = session_id
+        _save_report(session_id, user_id, report, goal=context.goal)
         yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
 
         update_copilot_session(
@@ -224,6 +241,8 @@ async def _direct_tools(
         for tool_name in tools:
             tool = tool_registry.get(tool_name)
             if tool is None:
+                logger.warning("[Copilot:tools] unknown tool '%s' in skill config", tool_name)
+                yield error_event(tool_name, f"未知的工具: {tool_name}")
                 continue
 
             rid = context.resume_id
@@ -243,14 +262,9 @@ async def _direct_tools(
             else:
                 yield error_event(tool_name, result.error or "unknown error")
 
-        # 保存对话消息（direct tools 路径也记录到会话历史）
-        conversation_manager.save_messages(
-            session_id, user_id,
-            [HumanMessage(content=f"执行任务：{', '.join(tools)}")],
-        )
-
         report = summarize_result(context)
         report["session_id"] = session_id
+        _save_report(session_id, user_id, report, goal=context.goal)
         yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
 
         update_copilot_session(
@@ -329,13 +343,12 @@ async def _coordinator_generator(
                 final_text = str(msg.content or "")
                 break
 
-        # 保存本轮消息到 DB
-        conversation_manager.save_messages(session_id, user_id, final_messages)
-        if context.messages_summary:
-            conversation_manager.save_summary(session_id, user_id, context.messages_summary)
-
+        # 保存本轮消息到 DB（ReAct 对话 + 结构化报告）
         report = summarize_result(context, final_message=final_text)
         report["session_id"] = session_id
+        _save_report(session_id, user_id, report, preexisting_messages=final_messages)
+        if context.messages_summary:
+            conversation_manager.save_summary(session_id, user_id, context.messages_summary)
         yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
 
         update_copilot_session(

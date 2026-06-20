@@ -542,7 +542,7 @@ def get_copilot_session(
             SELECT id, user_id, goal, status, context_json, task_ids_json, summary_json,
                    created_at, updated_at
             FROM copilot_session
-            WHERE id = ? AND user_id = ?
+            WHERE id = ? AND user_id = ? AND status != 'ARCHIVED'
             """,
             (session_id, user_id),
         )
@@ -623,7 +623,7 @@ def list_copilot_sessions(
             SELECT id, user_id, goal, status, context_json, task_ids_json, summary_json,
                    created_at, updated_at
             FROM copilot_session
-            WHERE user_id = ?
+            WHERE user_id = ? AND status != 'ARCHIVED'
             ORDER BY created_at DESC
             LIMIT ?
             """,

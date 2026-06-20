@@ -216,8 +216,24 @@ export function streamCopilot(payload, callbacks) {
     signal: controller.signal,
   })
     .then(async (response) => {
+      // 立即从响应头读取 session_id 并持久化（不等 final 事件）
+      const responseSessionId = response.headers.get("X-Session-Id");
+      if (responseSessionId) {
+        callbacks.onSessionCreated?.(Number(responseSessionId));
+      }
+
       if (!response.ok) {
         const text = await response.text();
+        // 会话过期/被删除 → 自动清除 session_id 并重试（最多一次）
+        if (response.status === 404 && payload.session_id && !payload._retried) {
+          if (text.includes("Session not found")) {
+            console.warn("[API] stale session_id=%s, auto-clearing and retrying", payload.session_id);
+            localStorage.removeItem("currentSessionId");
+            const retryPayload = { ...payload, session_id: undefined, _retried: true };
+            streamCopilot(retryPayload, callbacks);
+            return;
+          }
+        }
         callbacks.onError?.(text || `HTTP ${response.status}`);
         return;
       }
