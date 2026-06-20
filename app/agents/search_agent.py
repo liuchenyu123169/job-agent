@@ -13,11 +13,12 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.common import _trace_node
 from app.agent.recommend import recommend_jobs_for_resume
 from app.agent.state import AgentAnalyzeState
 from app.agents.base import SubAgent
 from app.rag.rag_service import search_knowledge
-from app.agent.common import save_success_task
+from app.agent.common import _trace_node,  save_success_task
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class SearchAgent(SubAgent):
 
     def build_pipeline(self):
         wf = StateGraph(AgentAnalyzeState)
-        wf.add_node("run_search", _run_search_knowledge_node)
+        wf.add_node("run_search", _trace_node("run_search", _run_search_knowledge_node))
         wf.add_edge(START, "run_search")
         wf.add_edge("run_search", END)
         return wf.compile()

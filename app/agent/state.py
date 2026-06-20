@@ -23,6 +23,7 @@ class AgentAnalyzeState(TypedDict):
     generated_resume: str | None
     task_id: int | None
     error_msg: str | None
+    trace_spans: list[dict] | None
 
 
 def make_initial_state(user_id: int, resume_id: int, job_id: int, **overrides) -> AgentAnalyzeState:
@@ -49,6 +50,7 @@ def make_initial_state(user_id: int, resume_id: int, job_id: int, **overrides) -
         "generated_resume": None,
         "task_id": None,
         "error_msg": None,
+        "trace_spans": [],
     }
     state.update(overrides)  # type: ignore[typeddict-item]
     return state

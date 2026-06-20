@@ -12,6 +12,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.common import _trace_node
 from app.agent.state import AgentAnalyzeState
 from app.agents.base import SubAgent
 from app.agent.workflow import (
@@ -56,13 +57,13 @@ class InterviewAgent(SubAgent):
     def build_pipeline(self):
         wf = StateGraph(AgentAnalyzeState)
         # 复用现有节点函数
-        wf.add_node("load_resume", load_resume_node)
-        wf.add_node("load_job", load_job_node)
-        wf.add_node("retrieve_knowledge", retrieve_knowledge_node)
-        wf.add_node("build_prompt", build_interview_questions_prompt_node)
-        wf.add_node("llm_generate", llm_generate_questions_node)
-        wf.add_node("parse_questions", parse_questions_node)
-        wf.add_node("save_task", save_questions_task_node)
+        wf.add_node("load_resume", _trace_node("load_resume", load_resume_node))
+        wf.add_node("load_job", _trace_node("load_job", load_job_node))
+        wf.add_node("retrieve_knowledge", _trace_node("retrieve_knowledge", retrieve_knowledge_node))
+        wf.add_node("build_prompt", _trace_node("build_prompt", build_interview_questions_prompt_node))
+        wf.add_node("llm_generate", _trace_node("llm_generate", llm_generate_questions_node))
+        wf.add_node("parse_questions", _trace_node("parse_questions", parse_questions_node))
+        wf.add_node("save_task", _trace_node("save_task", save_questions_task_node))
 
         wf.add_edge(START, "load_resume")
         wf.add_conditional_edges("load_resume", _route_after_load, {"retrieve_knowledge": "load_job", END: END})

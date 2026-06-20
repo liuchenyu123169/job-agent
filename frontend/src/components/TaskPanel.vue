@@ -1,6 +1,7 @@
 <script setup>
 import { inject, ref, computed } from "vue";
 import { formatJson, normalizeOutputFields } from "./utils.js";
+import TaskTrace from "./TaskTrace.vue";
 
 const api = inject("api");
 const setMessage = inject("setMessage");
@@ -162,5 +163,8 @@ defineExpose({ items, fetchTasks });
       <h5>错误信息</h5>
       <pre class="code-block error-block">{{ selectedTask.error_msg }}</pre>
     </div>
+
+    <!-- 执行链路追踪 -->
+    <TaskTrace :trace="selectedTask.trace_json || []" />
   </div>
 </template>

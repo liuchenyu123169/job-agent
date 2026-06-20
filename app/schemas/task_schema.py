@@ -10,6 +10,7 @@ class TaskResponse(BaseModel):
     output_json: dict[str, Any] | str | None = None
     status: str
     error_msg: str | None = None
+    trace_json: list[dict] | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

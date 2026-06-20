@@ -6,10 +6,12 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.common import analyze_resume_job, get_prompt_manager, parse_llm_json_output, save_success_task
+from app.agent.common import _trace_node,  analyze_resume_job, get_prompt_manager, parse_llm_json_output, save_success_task
 from app.agent.state import AgentAnalyzeState, make_initial_state
 from app.core.llm import invoke_llm
 from app.db.crud import get_job_by_id, get_resume_by_id
+from app.observability.tracer import get_current_spans, traced
+from app.db.crud import insert_task_traces
 from app.rag.rag_service import search_knowledge
 
 logger = logging.getLogger(__name__)
@@ -274,7 +276,7 @@ def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
 def load_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
     resume = get_resume_by_id(state["resume_id"], user_id=state["user_id"])
     if resume is None:
-        return {"error_msg": "Resume not found"}
+        return {"error_msg": "简历未找到"}
     return {"resume": resume}
 
 
@@ -284,7 +286,7 @@ def load_job_node(state: AgentAnalyzeState) -> dict[str, Any]:
 
     job = get_job_by_id(state["job_id"], user_id=state["user_id"])
     if job is None:
-        return {"error_msg": "Job not found"}
+        return {"error_msg": "岗位未找到"}
     return {"job": job}
 
 
@@ -334,7 +336,10 @@ def save_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
             "local_job_id": (state.get("job") or {}).get("local_job_id"),
         },
         user_id=state["user_id"],
+        trace_spans=state.get("trace_spans", []),
     )
+    spans = state.get("trace_spans", [])
+    insert_task_traces(task_id, spans)
     return {"task_id": task_id}
 
 
@@ -383,7 +388,10 @@ def save_optimize_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
             "local_job_id": (state.get("job") or {}).get("local_job_id"),
         },
         user_id=state["user_id"],
+        trace_spans=state.get("trace_spans", []),
     )
+    spans = state.get("trace_spans", [])
+    insert_task_traces(task_id, spans)
     return {"task_id": task_id}
 
 
@@ -437,7 +445,10 @@ def save_questions_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
             "rag_hit_sources": state.get("rag_hit_sources") or [],
         },
         user_id=state["user_id"],
+        trace_spans=state.get("trace_spans", []),
     )
+    spans = state.get("trace_spans", [])
+    insert_task_traces(task_id, spans)
     return {"task_id": task_id}
 
 
@@ -466,12 +477,12 @@ def _route_after_job_for_interview(state: AgentAnalyzeState) -> str:
 
 
 workflow = StateGraph(AgentAnalyzeState)
-workflow.add_node("load_resume", load_resume_node)
-workflow.add_node("load_job", load_job_node)
-workflow.add_node("build_prompt", build_prompt_node)
-workflow.add_node("llm_analyze", llm_analyze_node)
-workflow.add_node("parse_result", parse_result_node)
-workflow.add_node("save_task", save_task_node)
+workflow.add_node("load_resume", _trace_node("load_resume", load_resume_node))
+workflow.add_node("load_job", _trace_node("load_job", load_job_node))
+workflow.add_node("build_prompt", _trace_node("build_prompt", build_prompt_node))
+workflow.add_node("llm_analyze", _trace_node("llm_analyze", llm_analyze_node))
+workflow.add_node("parse_result", _trace_node("parse_result", parse_result_node))
+workflow.add_node("save_task", _trace_node("save_task", save_task_node))
 workflow.add_edge(START, "load_resume")
 workflow.add_conditional_edges("load_resume", _route_on_error, ["load_job", END])
 workflow.add_conditional_edges("load_job", _route_after_job, ["build_prompt", END])
@@ -483,12 +494,12 @@ workflow.add_edge("save_task", END)
 analyze_graph = workflow.compile()
 
 optimize_workflow = StateGraph(AgentAnalyzeState)
-optimize_workflow.add_node("load_resume", load_resume_node)
-optimize_workflow.add_node("load_job", load_job_node)
-optimize_workflow.add_node("build_optimize_prompt", build_optimize_prompt_node)
-optimize_workflow.add_node("llm_optimize", llm_optimize_node)
-optimize_workflow.add_node("parse_optimization", parse_optimization_node)
-optimize_workflow.add_node("save_optimize_task", save_optimize_task_node)
+optimize_workflow.add_node("load_resume", _trace_node("load_resume", load_resume_node))
+optimize_workflow.add_node("load_job", _trace_node("load_job", load_job_node))
+optimize_workflow.add_node("build_optimize_prompt", _trace_node("build_optimize_prompt", build_optimize_prompt_node))
+optimize_workflow.add_node("llm_optimize", _trace_node("llm_optimize", llm_optimize_node))
+optimize_workflow.add_node("parse_optimization", _trace_node("parse_optimization", parse_optimization_node))
+optimize_workflow.add_node("save_optimize_task", _trace_node("save_optimize_task", save_optimize_task_node))
 optimize_workflow.add_edge(START, "load_resume")
 optimize_workflow.add_conditional_edges("load_resume", _route_on_error, ["load_job", END])
 optimize_workflow.add_conditional_edges("load_job", _route_after_job_for_optimize, ["build_optimize_prompt", END])
@@ -500,13 +511,13 @@ optimize_workflow.add_edge("save_optimize_task", END)
 optimize_resume_graph = optimize_workflow.compile()
 
 interview_workflow = StateGraph(AgentAnalyzeState)
-interview_workflow.add_node("load_resume", load_resume_node)
-interview_workflow.add_node("load_job", load_job_node)
-interview_workflow.add_node("retrieve_knowledge", retrieve_knowledge_node)
-interview_workflow.add_node("build_interview_questions_prompt", build_interview_questions_prompt_node)
-interview_workflow.add_node("llm_interview", llm_generate_questions_node)
-interview_workflow.add_node("parse_questions", parse_questions_node)
-interview_workflow.add_node("save_questions_task", save_questions_task_node)
+interview_workflow.add_node("load_resume", _trace_node("load_resume", load_resume_node))
+interview_workflow.add_node("load_job", _trace_node("load_job", load_job_node))
+interview_workflow.add_node("retrieve_knowledge", _trace_node("retrieve_knowledge", retrieve_knowledge_node))
+interview_workflow.add_node("build_interview_questions_prompt", _trace_node("build_interview_questions_prompt", build_interview_questions_prompt_node))
+interview_workflow.add_node("llm_interview", _trace_node("llm_interview", llm_generate_questions_node))
+interview_workflow.add_node("parse_questions", _trace_node("parse_questions", parse_questions_node))
+interview_workflow.add_node("save_questions_task", _trace_node("save_questions_task", save_questions_task_node))
 interview_workflow.add_edge(START, "load_resume")
 interview_workflow.add_conditional_edges("load_resume", _route_on_error, ["load_job", END])
 interview_workflow.add_conditional_edges("load_job", _route_after_job_for_interview, ["retrieve_knowledge", END])
@@ -556,7 +567,7 @@ def load_or_prepare_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if resume_id and resume_id > 0:
         resume = get_resume_by_id(resume_id, user_id=state["user_id"])
         if resume is None:
-            return {"error_msg": "Resume not found"}
+            return {"error_msg": "简历未找到"}
         return {"resume": resume}
 
     personal_info = state.get("personal_info") or ""
@@ -625,7 +636,10 @@ def save_generate_resume_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
             "local_job_id": (state.get("job") or {}).get("local_job_id"),
         },
         user_id=state["user_id"],
+        trace_spans=state.get("trace_spans", []),
     )
+    spans = state.get("trace_spans", [])
+    insert_task_traces(task_id, spans)
     return {"task_id": task_id}
 
 
@@ -644,12 +658,12 @@ def _route_after_job_for_generate(state: AgentAnalyzeState) -> str:
 
 
 generate_resume_workflow = StateGraph(AgentAnalyzeState)
-generate_resume_workflow.add_node("load_or_prepare_resume", load_or_prepare_resume_node)
-generate_resume_workflow.add_node("load_job", load_job_node)
-generate_resume_workflow.add_node("build_generate_resume_prompt", build_generate_resume_prompt_node)
-generate_resume_workflow.add_node("llm_generate_resume", llm_generate_resume_node)
-generate_resume_workflow.add_node("parse_generated_resume", parse_generated_resume_node)
-generate_resume_workflow.add_node("save_generate_resume_task", save_generate_resume_task_node)
+generate_resume_workflow.add_node("load_or_prepare_resume", _trace_node("load_or_prepare_resume", load_or_prepare_resume_node))
+generate_resume_workflow.add_node("load_job", _trace_node("load_job", load_job_node))
+generate_resume_workflow.add_node("build_generate_resume_prompt", _trace_node("build_generate_resume_prompt", build_generate_resume_prompt_node))
+generate_resume_workflow.add_node("llm_generate_resume", _trace_node("llm_generate_resume", llm_generate_resume_node))
+generate_resume_workflow.add_node("parse_generated_resume", _trace_node("parse_generated_resume", parse_generated_resume_node))
+generate_resume_workflow.add_node("save_generate_resume_task", _trace_node("save_generate_resume_task", save_generate_resume_task_node))
 generate_resume_workflow.add_edge(START, "load_or_prepare_resume")
 generate_resume_workflow.add_conditional_edges("load_or_prepare_resume", _route_after_resume_load, ["load_job", END])
 generate_resume_workflow.add_conditional_edges("load_job", _route_after_job_for_generate, ["build_generate_resume_prompt", END])

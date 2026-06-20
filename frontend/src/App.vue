@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, provide, reactive, ref } from "vue";
 import {
-  agentApi, authApi, copilotApi, jobApi, knowledgeApi, resumeApi,
+  adminApi, agentApi, authApi, copilotApi, jobApi, knowledgeApi, resumeApi,
   setUnauthorizedHandler, taskApi
 } from "./api";
 import { getErrorMessage } from "./components/utils.js";
@@ -11,6 +11,13 @@ import ResumePanel from "./components/ResumePanel.vue";
 import JobPanel from "./components/JobPanel.vue";
 import RecommendPanel from "./components/RecommendPanel.vue";
 import TaskPanel from "./components/TaskPanel.vue";
+import AdminDashboard from "./components/AdminDashboard.vue";
+import AdminJobs from "./components/AdminJobs.vue";
+import AdminResumes from "./components/AdminResumes.vue";
+import AdminSessions from "./components/AdminSessions.vue";
+import AdminTasks from "./components/AdminTasks.vue";
+import AdminTraces from "./components/AdminTraces.vue";
+import AdminUsers from "./components/AdminUsers.vue";
 import KnowledgePanel from "./components/KnowledgePanel.vue";
 
 /* ── 侧边栏 ── */
@@ -21,15 +28,23 @@ const baseSidebarItems = [
   { key: "recommend", label: "岗位推荐",  icon: "🔍" },
   { key: "task",      label: "任务记录",  icon: "📋" },
 ];
+const adminSidebarItems = [
+  { key: "admin_dashboard", label: "管理仪表盘", icon: "📊" },
+  { key: "admin_users",     label: "用户管理",   icon: "👥" },
+  { key: "admin_resumes",   label: "全局简历",   icon: "📄" },
+  { key: "admin_jobs",      label: "全局岗位",   icon: "💼" },
+  { key: "admin_tasks",     label: "全局任务",   icon: "📋" },
+  { key: "admin_sessions",  label: "全局会话",   icon: "💬" },
+  { key: "admin_traces",    label: "链路追踪",   icon: "🔍" },
+  { key: "knowledge",       label: "RAG 知识库", icon: "⚙️" },
+  { key: "evaluation",      label: "评测",       icon: "📊" },
+];
+
 const sidebarItems = computed(() => {
-  const items = [...baseSidebarItems];
-  if (currentUser.value?.is_admin) {
-    items.push({ key: "evaluation", label: "评测",      icon: "📊" });
-    items.push({ key: "knowledge",  label: "RAG 知识库", icon: "⚙️" });
-  }
-  return items;
+  if (currentUser.value?.is_admin) return adminSidebarItems;
+  return baseSidebarItems;
 });
-const activePanel = ref(null);
+const activeView = ref("chat");  // 当前主视图：chat | resume | job | recommend | task | admin_* | knowledge | evaluation
 
 /* ── 会话管理（侧边栏历史列表） ── */
 const currentSessionId = ref(getStoredSessionId());
@@ -50,7 +65,7 @@ async function loadSessions() {
 async function selectSession(sessionId) {
   currentSessionId.value = sessionId;
   storeSessionId(sessionId);
-  activePanel.value = null; // 关闭其他面板
+  activeView.value = "chat"; // 切回对话视图
   if (chatRef.value) {
     await chatRef.value.loadSessionHistory(sessionId);
   }
@@ -228,15 +243,13 @@ async function runEvaluation() {
   evalRunning.value = false;
 }
 
-/* ── 面板切换 ── */
-function togglePanel(key) {
-  activePanel.value = activePanel.value === key ? null : key;
+/* ── 主视图切换 ── */
+function switchView(key) {
+  activeView.value = key;
 }
-function closePanel() { activePanel.value = null; }
-function openPanel(key) { activePanel.value = key; }
 
 /* ── provide 共享状态给子组件 ── */
-provide("api", { agentApi, authApi, copilotApi, jobApi, knowledgeApi, resumeApi, taskApi });
+provide("api", { adminApi, agentApi, authApi, copilotApi, jobApi, knowledgeApi, resumeApi, taskApi });
 provide("setMessage", setMessage);
 provide("loadingMap", loadingMap);
 provide("token", token);
@@ -255,6 +268,7 @@ provide("selectSession", selectSession);
 provide("newChat", newChat);
 provide("loadSessions", loadSessions);
 provide("storeSessionId", storeSessionId);
+provide("switchView", switchView);
 
 onMounted(async () => {
   setUnauthorizedHandler(() => clearSession());
@@ -295,8 +309,8 @@ onUnmounted(() => setUnauthorizedHandler(null));
           <nav class="sidebar-nav">
             <button v-for="item in sidebarItems" :key="item.key"
               class="nav-item"
-              :class="{ active: activePanel === item.key || (item.key === 'chat' && !activePanel) }"
-              @click="item.key === 'chat' ? closePanel() : togglePanel(item.key)">
+              :class="{ active: activeView === item.key }"
+              @click="switchView(item.key)">
               <span class="nav-icon">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
             </button>
@@ -333,45 +347,40 @@ onUnmounted(() => setUnauthorizedHandler(null));
           </div>
         </aside>
 
-        <!-- ── 主视图 ── -->
+        <!-- ── 主视图（根据侧边栏选中项切换内容） ── -->
         <div class="main-shell">
 
-          <ChatPanel ref="chatRef" @openPanel="openPanel" />
-
-          <!-- 滑出面板 -->
-          <div v-if="activePanel" class="panel-overlay" @click="closePanel">
-            <div class="slide-panel" @click.stop>
-              <div class="panel-header">
-                <h4>{{ sidebarItems.find(i => i.key === activePanel)?.label || '' }}</h4>
-                <button class="btn btn-ghost btn-small" @click="closePanel">✕</button>
+          <ChatPanel ref="chatRef" v-if="activeView === 'chat'" />
+          <ResumePanel ref="resumeRef" v-if="activeView === 'resume'" />
+          <JobPanel ref="jobRef" v-if="activeView === 'job'" />
+          <RecommendPanel v-if="activeView === 'recommend'" />
+          <TaskPanel ref="taskRef" v-if="activeView === 'task'" />
+          <AdminDashboard v-if="activeView === 'admin_dashboard'" />
+          <AdminUsers v-if="activeView === 'admin_users'" />
+          <AdminResumes v-if="activeView === 'admin_resumes'" />
+          <AdminJobs v-if="activeView === 'admin_jobs'" />
+          <AdminTasks v-if="activeView === 'admin_tasks'" />
+          <AdminSessions v-if="activeView === 'admin_sessions'" />
+          <AdminTraces v-if="activeView === 'admin_traces'" />
+          <KnowledgePanel v-if="activeView === 'knowledge'" />
+          <div v-if="activeView === 'evaluation'" class="eval-panel-inline section-top" style="padding:24px;max-width:600px;margin:0 auto;">
+            <h4>自动化评测</h4>
+            <p>选择 workflow 并运行评测，结果保存到 evaluation_results/ 目录。</p>
+            <div class="form-stack">
+              <div class="field"><span>Workflow</span>
+                <select v-model="evalWorkflow" style="width:100%;height:40px;border-radius:10px;padding:0 12px;border:1px solid #cbd5e1;">
+                  <option v-for="w in evalWorkflows" :key="w" :value="w">{{ w }}</option>
+                </select>
               </div>
-              <div class="panel-body">
-                <ResumePanel ref="resumeRef" v-if="activePanel === 'resume'" @close="closePanel" />
-                <JobPanel ref="jobRef" v-if="activePanel === 'job'" @close="closePanel" />
-                <RecommendPanel v-if="activePanel === 'recommend'" @close="closePanel" />
-                <TaskPanel ref="taskRef" v-if="activePanel === 'task'" />
-                <KnowledgePanel v-if="activePanel === 'knowledge'" />
-                <div v-if="activePanel === 'evaluation'" class="eval-panel-inline">
-                  <h4>自动化评测</h4>
-                  <p>选择 workflow 并运行评测，结果保存到 evaluation_results/ 目录。</p>
-                  <div class="form-stack">
-                    <div class="field"><span>Workflow</span>
-                      <select v-model="evalWorkflow" style="width:100%;height:40px;border-radius:10px;padding:0 12px;border:1px solid #cbd5e1;">
-                        <option v-for="w in evalWorkflows" :key="w" :value="w">{{ w }}</option>
-                      </select>
-                    </div>
-                    <div class="field"><span>LLM Judge</span>
-                      <input type="checkbox" v-model="evalUseJudge" /> 启用 LLM 质量评分（耗时较长）
-                    </div>
-                    <button class="btn btn-primary" :disabled="evalRunning" @click="runEvaluation">
-                      {{ evalRunning ? '评测中...' : '运行评测' }}
-                    </button>
-                  </div>
-                  <div v-if="evalResult" style="margin-top:16px;background:#f8fafc;border-radius:12px;padding:16px;max-height:400px;overflow:auto;">
-                    <pre style="font-size:12px;white-space:pre-wrap;margin:0;">{{ JSON.stringify(evalResult, null, 2) }}</pre>
-                  </div>
-                </div>
+              <div class="field"><span>LLM Judge</span>
+                <input type="checkbox" v-model="evalUseJudge" /> 启用 LLM 质量评分（耗时较长）
               </div>
+              <button class="btn btn-primary" :disabled="evalRunning" @click="runEvaluation">
+                {{ evalRunning ? '评测中...' : '运行评测' }}
+              </button>
+            </div>
+            <div v-if="evalResult" style="margin-top:16px;background:#f8fafc;border-radius:12px;padding:16px;max-height:400px;overflow:auto;">
+              <pre style="font-size:12px;white-space:pre-wrap;margin:0;">{{ JSON.stringify(evalResult, null, 2) }}</pre>
             </div>
           </div>
         </div>
@@ -453,11 +462,6 @@ onUnmounted(() => setUnauthorizedHandler(null));
 .toast-fade-leave-to   { opacity: 0; transform: translateX(-50%) translateY(-8px); }
 
 /* ── 面板 ── */
-.panel-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.3); z-index: 30; display: flex; justify-content: flex-end; }
-.slide-panel { width: min(480px, 90vw); height: 100%; background: #fff; overflow-y: auto; box-shadow: -8px 0 30px rgba(15,23,42,0.1); }
-.panel-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid #e5e7eb; position: sticky; top: 0; background: #fff; z-index: 2; }
-.panel-header h4 { margin: 0; font-size: 18px; }
-.panel-body { padding: 24px; }
 
 /* ── 全局子组件样式 ── */
 :global(.form-stack) { display: grid; gap: 14px; }
@@ -518,12 +522,9 @@ onUnmounted(() => setUnauthorizedHandler(null));
 :global(.msg-bubble) { padding: 12px 16px; border-radius: 16px; font-size: 14px; line-height: 1.7; }
 :global(.user-bubble) { background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
 :global(.copilot-bubble) { background: #fff; border: 1px solid #e5e7eb; border-bottom-left-radius: 4px; }
-:global(.tool-bubble) { background: #fffbeb; border: 1px dashed #fcd34d; cursor: pointer; padding: 8px 14px; border-radius: 12px; }
-:global(.tool-summary) { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #92400e; }
-:global(.tool-icon) { font-size: 14px; }
-:global(.tool-label) { font-weight: 600; }
-:global(.tool-expand-hint) { margin-left: auto; font-size: 10px; color: #b45309; }
-:global(.tool-content) { margin-top: 8px; font-size: 11px; max-height: 200px; overflow: auto; background: #fef3c7; padding: 8px; border-radius: 8px; white-space: pre-wrap; word-break: break-all; }
+:global(.btn-toggle-detail) { margin-left: auto; font-size: 11px; color: #64748b; background: #f1f5f9; border: 1px solid #e5e7eb; border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+:global(.btn-toggle-detail:hover) { background: #e2e8f0; }
+:global(.step-summary-inline) { font-size: 11px; color: #64748b; margin-left: auto; }
 :global(.msg-card) { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 16px; width: 100%; }
 :global(.msg-card-title) { font-weight: 700; margin-bottom: 10px; font-size: 14px; }
 :global(.step-block) { margin-bottom: 10px; }

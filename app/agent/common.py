@@ -1,7 +1,8 @@
 import json
 import logging
 import re
-from typing import Any
+import time
+from typing import Any, Callable
 
 from app.core.constants import DEFAULT_USER_ID
 from app.core.llm import invoke_llm
@@ -9,6 +10,23 @@ from app.db.crud import insert_agent_task
 from app.prompt_engine import PromptManager
 
 logger = logging.getLogger(__name__)
+
+
+def _trace_node(name: str, fn: Callable) -> Callable:
+    """包装工作流节点函数，自动记录耗时到 state[\"trace_spans\"]。
+
+    用法:
+        graph.add_node(\"load_resume\", _trace_node(\"load_resume\", load_resume_node))
+    """
+    def wrapper(state: dict) -> dict:
+        t0 = time.monotonic()
+        result = fn(state)
+        dur = round((time.monotonic() - t0) * 1000, 2)
+        spans = state.setdefault("trace_spans", [])
+        spans.append({"name": name, "duration_ms": dur})
+        return result
+    wrapper.__name__ = fn.__name__
+    return wrapper
 
 # 全局 PromptManager 单例（v1 版本，默认不启用 few-shot）
 _prompt_manager = PromptManager(version="v1")
@@ -100,6 +118,7 @@ def save_success_task(
     output_data: dict[str, Any],
     input_data: dict[str, Any] | None = None,
     user_id: int = DEFAULT_USER_ID,
+    trace_spans: list[dict] | None = None,
 ) -> int:
     return insert_agent_task(
         task_type=task_type,
@@ -109,6 +128,7 @@ def save_success_task(
         output_data=output_data,
         status="SUCCESS",
         user_id=user_id,
+        trace_spans=trace_spans,
     )
 
 
@@ -120,6 +140,7 @@ def save_failed_task(
     input_data: dict[str, Any] | None = None,
     output_data: dict[str, Any] | None = None,
     user_id: int = DEFAULT_USER_ID,
+    trace_spans: list[dict] | None = None,
 ) -> int:
     logger.error("[TASK] %s failed: %s", task_type, error_msg)
     return insert_agent_task(
@@ -131,4 +152,5 @@ def save_failed_task(
         status="FAILED",
         error_msg=error_msg,
         user_id=user_id,
+        trace_spans=trace_spans,
     )

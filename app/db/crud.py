@@ -360,11 +360,13 @@ def insert_agent_task(
     status: str = "SUCCESS",
     error_msg: str | None = None,
     user_id: int = DEFAULT_USER_ID,
+    trace_spans: list[dict] | None = None,
 ) -> int:
     conn: sqlite3.Connection | None = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
+        trace_json_str = json.dumps(trace_spans, ensure_ascii=False) if trace_spans else None
         cursor.execute(
             """
             INSERT INTO agent_task (
@@ -375,9 +377,10 @@ def insert_agent_task(
                 output_json,
                 status,
                 error_msg,
-                user_id
+                user_id,
+                trace_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_type,
@@ -388,6 +391,7 @@ def insert_agent_task(
                 status,
                 error_msg,
                 user_id,
+                trace_json_str,
             ),
         )
         conn.commit()
@@ -396,6 +400,63 @@ def insert_agent_task(
         if conn is not None:
             conn.rollback()
         raise RuntimeError("Failed to insert agent task") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def insert_task_traces(task_id: int, spans: list[dict]) -> int:
+    """批量写入任务执行链路 span。"""
+    if not spans:
+        return 0
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        for span in spans:
+            cursor.execute(
+                """
+                INSERT INTO task_trace (task_id, span_name, duration_ms, metadata)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    span["name"],
+                    span["duration_ms"],
+                    json.dumps(span.get("metadata", {}), ensure_ascii=False),
+                ),
+            )
+        conn.commit()
+        return len(spans)
+    except sqlite3.Error as exc:
+        if conn is not None:
+            conn.rollback()
+        raise RuntimeError(f"Failed to insert task traces for task {task_id}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_task_traces(task_id: int) -> list[dict]:
+    """查询单个任务的所有链路 span。"""
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, span_name, duration_ms, metadata, created_at FROM task_trace WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        )
+        rows = cursor.fetchall()
+        result: list[dict] = []
+        for row in rows:
+            d = dict(row)
+            if d.get("metadata"):
+                d["metadata"] = _loads_json_or_raw(d["metadata"])
+            result.append(d)
+        return result
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Failed to get task traces for task {task_id}") from exc
     finally:
         if conn is not None:
             conn.close()
@@ -417,6 +478,7 @@ def get_task_by_id(task_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str, An
                 output_json,
                 status,
                 error_msg,
+                trace_json,
                 created_at,
                 updated_at
             FROM agent_task
@@ -430,6 +492,7 @@ def get_task_by_id(task_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str, An
 
         task["input_json"] = _loads_json(task["input_json"])
         task["output_json"] = _loads_json(task["output_json"])
+        task["trace_json"] = _loads_json_or_raw(task["trace_json"])
         return task
     except (sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(f"Failed to query task by id: {task_id}") from exc

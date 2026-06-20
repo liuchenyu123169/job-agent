@@ -11,11 +11,14 @@ from app.agent.common import (
 )
 from app.core.constants import DEFAULT_USER_ID
 from app.db.crud import get_resume_by_id, list_jobs_for_user
+from app.observability.tracer import get_current_spans, traced
+from app.db.crud import insert_task_traces
 
 
 logger = logging.getLogger(__name__)
 
 
+@traced("recommend_jobs")
 def recommend_jobs_for_resume(
     resume_id: int,
     top_k: int = 5,
@@ -31,7 +34,7 @@ def recommend_jobs_for_resume(
 
     resume = get_resume_by_id(resume_id, user_id=user_id)
     if resume is None:
-        error_msg = "Resume not found"
+        error_msg = "简历未找到"
         save_failed_task(
             task_type="JOB_RECOMMEND",
             resume_id=resume_id,
@@ -71,8 +74,11 @@ def recommend_jobs_for_resume(
             input_data=input_payload,
             output_data=result,
             user_id=user_id,
+            trace_spans=get_current_spans(),
         )
         result["task_id"] = task_id
+        spans = get_current_spans()
+        insert_task_traces(task_id, spans)
         logger.info("[RECOMMEND] finished items=0")
         return {**result, "error_msg": None}
 
@@ -127,5 +133,7 @@ def recommend_jobs_for_resume(
         user_id=user_id,
     )
     result["task_id"] = task_id
+    spans = get_current_spans()
+    insert_task_traces(task_id, spans)
     logger.info("[RECOMMEND] finished items=%s", len(result["items"]))
     return {**result, "error_msg": None}

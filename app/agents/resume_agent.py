@@ -12,6 +12,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.common import _trace_node
 from app.agent.state import AgentAnalyzeState
 from app.agent.workflow import run_analyze_workflow, run_optimize_resume_workflow
 from app.agents.base import SubAgent
@@ -82,8 +83,8 @@ class ResumeAgent(SubAgent):
 
     def build_pipeline(self):
         wf = StateGraph(AgentAnalyzeState)
-        wf.add_node("run_match", _run_match_node)
-        wf.add_node("run_optimize", _run_optimize_node)
+        wf.add_node("run_match", _trace_node("run_match", _run_match_node))
+        wf.add_node("run_optimize", _trace_node("run_optimize", _run_optimize_node))
         wf.add_edge(START, "run_match")
         wf.add_conditional_edges("run_match", _route_after_match, {"run_optimize": "run_optimize", END: END})
         wf.add_edge("run_optimize", END)

@@ -16,16 +16,25 @@ const selectSession = inject("selectSession");
 const newChat = inject("newChat");
 const loadSessions = inject("loadSessions");
 const storeSessionId = inject("storeSessionId");
+const switchView = inject("switchView");
 
 /* ── 工具元数据 ── */
 const toolMetaMap = ref({});
 
 async function loadMeta() {
   try {
-    const tools = await api.copilotApi.listTools();
+    const [tools, skills] = await Promise.all([
+      api.copilotApi.listTools(),
+      api.copilotApi.listSkills(),
+    ]);
     const map = {};
     for (const t of tools) map[t.name] = t;
     toolMetaMap.value = map;
+    // 从后端动态获取「定制简历」关键词，消除前端硬编码重复
+    const resumeSkill = skills.find(s => s.name === "定制简历");
+    if (resumeSkill?.keywords) {
+      resumeGenKeywords.value = resumeSkill.keywords;
+    }
   } catch { /* 静默降级 */ }
 }
 
@@ -50,7 +59,7 @@ function convertHistoryToMessages(historyMsgs) {
       if (content.startsWith(COPILOT_REPORT_MARKER)) {
         try {
           const report = JSON.parse(content.slice(COPILOT_REPORT_MARKER.length));
-          const copilotMsg = { role: "copilot", steps: [], final: report, error: null };
+          const copilotMsg = { role: "copilot", steps: [], final: report, error: null, _collapsed: false };
           for (const rawStep of report.steps || []) {
             // 包装为 { summary: rawStep } 匹配 live SSE 的 s.summary = data.result 结构
             const s = { tool: rawStep.tool, status: "done", summary: rawStep };
@@ -65,20 +74,8 @@ function convertHistoryToMessages(historyMsgs) {
       } else {
         result.push({ role: "copilot", text: content });
       }
-    } else if (m.role === "tool") {
-      // 工具调用结果：折叠显示
-      const content = m.content || "";
-      const preview = content.length > 200 ? content.slice(0, 200) + "…" : content;
-      const label = m.tool_name ? `[${m.tool_name}] ` : "[工具结果] ";
-      result.push({
-        role: "copilot",
-        text: label + preview,
-        isToolResult: true,
-        toolContent: content,
-        toolName: m.tool_name || "",
-        _collapsed: true,
-      });
     }
+    // tool 消息不展示给用户（内部执行细节）
   }
   return result;
 }
@@ -126,12 +123,12 @@ function welcome(username) {
   }
 }
 
-/* ── 简历生成意图检测 ── */
-const RESUME_GEN_KEYWORDS = ["生成简历", "定制简历", "写简历", "简历生成", "做简历", "制作简历", "生成一份简历", "写一份简历", "写个简历", "生成个简历", "做一份简历", "制作一份简历"];
+/* ── 简历生成意图检测（关键词从后端 Skill 动态获取，避免前端硬编码重复） ── */
+const resumeGenKeywords = ref([]);
 
 function isResumeGenIntent(text) {
   const t = text.toLowerCase();
-  return RESUME_GEN_KEYWORDS.some(kw => t.includes(kw));
+  return resumeGenKeywords.value.some(kw => t.includes(kw));
 }
 
 /* ── 发送消息 ── */
@@ -153,7 +150,7 @@ function send() {
   addMessage({ role: "user", text });
   input.value = "";
 
-  const copilotMsg = { role: "copilot", steps: [], final: null, error: null };
+  const copilotMsg = { role: "copilot", steps: [], final: null, error: null, _collapsed: false };
   addMessage(copilotMsg);
   running.value = true;
 
@@ -225,18 +222,8 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
         <div v-if="msg.role === 'user'" class="msg-bubble user-bubble">{{ msg.text }}</div>
 
         <!-- Copilot 文本消息 -->
-        <div v-else-if="msg.text && !msg.steps && !msg.isToolResult" class="msg-bubble copilot-bubble">
+        <div v-else-if="msg.text && !msg.steps" class="msg-bubble copilot-bubble">
           <div class="msg-text" v-html="msg.text.replace(/\n/g, '<br>')"></div>
-        </div>
-
-        <!-- 工具结果（可折叠） -->
-        <div v-else-if="msg.isToolResult" class="msg-bubble tool-bubble" @click="msg._collapsed = !msg._collapsed">
-          <div class="tool-summary">
-            <span class="tool-icon">🔧</span>
-            <span class="tool-label">{{ msg.toolName || '工具结果' }}</span>
-            <span class="tool-expand-hint">{{ msg._collapsed ? '点击展开' : '点击收起' }}</span>
-          </div>
-          <pre v-if="!msg._collapsed" class="tool-content">{{ msg.toolContent }}</pre>
         </div>
 
         <!-- Copilot 步骤消息 -->
@@ -245,15 +232,26 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
             <span v-if="!msg.final && !msg.error">🤖 执行中...</span>
             <span v-else-if="msg.error">❌ 执行出错</span>
             <span v-else>✅ 执行完毕</span>
+            <button v-if="msg.final && !msg.error" class="btn-toggle-detail" @click="msg._collapsed = !msg._collapsed">
+              {{ msg._collapsed ? '展开 ▼' : '收起 ▲' }}
+            </button>
           </div>
           <div v-for="step in msg.steps" :key="step.tool" class="step-block" :class="'step-' + step.status">
             <div class="step-row">
               <span class="step-icon">{{ step.status === 'running' ? '⏳' : step.status === 'done' ? '✅' : '❌' }}</span>
               <span class="step-label">{{ step.label }}</span>
+              <span v-if="step.status === 'done' && step.summary" class="step-summary-inline">
+                {{ step.summary.analysis?.match_score !== undefined ? step.summary.analysis.match_score + ' 分' : '' }}
+                {{ step.summary.tech_count !== undefined ? step.summary.tech_count + step.summary.project_count + ' 道题' : '' }}
+                {{ step.summary.generated_resume ? '已生成' : '' }}
+                {{ step.summary.optimization?.summary ? '已完成' : '' }}
+              </span>
             </div>
 
+            <!-- 详情区（可折叠） -->
+            <template v-if="step.status === 'done'">
             <!-- 匹配分析 / 简历优化 结果 -->
-            <div v-if="step.status === 'done' && step.summary?.analysis" class="step-detail">
+            <div v-if="step.summary?.analysis" class="step-detail" v-show="!msg._collapsed">
               <div v-if="step.summary.analysis.match_score !== undefined" class="match-score-big">
                 {{ step.summary.analysis.match_score }}<span>分</span>
               </div>
@@ -274,7 +272,7 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
               </div>
             </div>
 
-            <div v-if="step.status === 'done' && step.summary?.optimization" class="step-detail">
+            <div v-if="step.summary?.optimization" class="step-detail" v-show="!msg._collapsed">
               <p v-if="step.summary.optimization.summary" class="detail-text">{{ step.summary.optimization.summary }}</p>
               <div v-if="step.summary.optimization.skill_keywords?.length" class="detail-item">
                 <h6>技能关键词</h6>
@@ -295,7 +293,7 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
             </div>
 
             <!-- 生成简历结果 -->
-            <div v-if="step.status === 'done' && step.summary?.generated_resume" class="step-detail">
+            <div v-if="step.summary?.generated_resume" class="step-detail" v-show="!msg._collapsed">
               <div class="detail-item">
                 <h6>📄 生成的简历</h6>
                 <div class="generated-resume-text" v-html="step.summary.generated_resume.replace(/\n/g, '<br>')"></div>
@@ -303,7 +301,7 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
             </div>
 
             <!-- 面试题结果 -->
-            <div v-if="step.status === 'done' && step.summary?.questions" class="step-detail">
+            <div v-if="step.summary?.questions" class="step-detail" v-show="!msg._collapsed">
               <template v-for="group in [
                 {key:'technical_questions',label:'技术问题'},
                 {key:'project_questions',label:'项目问题'},
@@ -320,6 +318,7 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
                 </div>
               </template>
             </div>
+            </template>  <!-- v-if="step.status === 'done'" -->
           </div>
           <div v-if="msg.final" class="msg-final"><p>{{ msg.final.summary }}</p></div>
           <div v-if="msg.error" class="msg-error">{{ msg.error }}</div>
@@ -334,8 +333,8 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
     <!-- 输入区 -->
     <div class="chat-input-bar">
       <div class="quick-actions">
-        <button class="btn btn-ghost btn-small" @click="$emit('openPanel', 'resume')">📄 简历管理</button>
-        <button class="btn btn-ghost btn-small" @click="$emit('openPanel', 'job')">💼 新建岗位</button>
+        <button class="btn btn-ghost btn-small" @click="switchView('resume')">📄 简历管理</button>
+        <button class="btn btn-ghost btn-small" @click="switchView('job')">💼 新建岗位</button>
         <button class="btn btn-ghost btn-small" :disabled="running || !currentResume.id || !currentJob.id" @click="input='全面备战'; send()">🚀 一键备战</button>
       </div>
       <div class="input-row">
