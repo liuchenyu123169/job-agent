@@ -107,20 +107,53 @@ class SkillRegistry:
         return matched[0] if matched else None
 
     def match_all(self, text: str, min_score: int = 1) -> list[Skill]:
-        """返回所有匹配的 Skill，按分数降序（多意图场景）。
+        """返回所有匹配的 Skill，混合关键词 + 嵌入匹配（多意图场景）。
+
+        匹配策略（三级 fallback）：
+        1. 关键词子串匹配（快，~0ms）
+        2. 关键词总分 < KEYWORD_MIN_SCORE → embedding 余弦相似度（~150ms）
+        3. 嵌入置信度不足 → 返回空列表 → Coordinator ReAct 兜底
 
         用法：
             skills = registry.match_all("分析匹配度，顺便推荐岗位")
-            → [match_analyze, find_jobs]
-            合并所有 skill 的 sub_agents 后交给 Coordinator 统一调度。
+            → [match_analyze, find_jobs]（关键词命中）
+            skills = registry.match_all("评估这个岗位是否适合我")
+            → [match_analyze]（embedding 匹配，"匹配分析" 相似度 0.82）
         """
+        from app.skills.intent_classifier import (
+            KEYWORD_MIN_SCORE,
+            classify_embedding,
+        )
+
+        # Phase 1: 关键词匹配
         scored: list[tuple[int, Skill]] = []
         for skill in self._skills:
             score = skill.match_score(text)
             if score >= min_score:
                 scored.append((score, skill))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [s for _, s in scored]
+
+        total_keyword_score = sum(s for s, _ in scored)
+        if total_keyword_score >= KEYWORD_MIN_SCORE:
+            logger.info(
+                "[SkillRegistry] 关键词匹配: %d 个 Skill, 总分=%d",
+                len(scored), total_keyword_score,
+            )
+            return [s for _, s in scored]
+
+        # Phase 2: 嵌入语义匹配（关键词不够时 fallback）
+        logger.info(
+            "[SkillRegistry] 关键词分数不足(%d < %d)，启用嵌入 fallback",
+            total_keyword_score, KEYWORD_MIN_SCORE,
+        )
+
+        embedding_results = classify_embedding(text, self._skills)
+        if embedding_results:
+            return [s for s, _ in embedding_results]
+
+        # Phase 3: 委派 Coordinator
+        logger.info("[SkillRegistry] 嵌入也未匹配，委派 Coordinator")
+        return []
 
     def list_all(self) -> list[Skill]:
         """返回所有已加载的 Skill。"""
