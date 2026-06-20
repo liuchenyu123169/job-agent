@@ -32,5 +32,5 @@ def get_task(
 ) -> TaskResponse:
     task = get_task_by_id(task_id, user_id=int(current_user["id"]))
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务未找到")
     return TaskResponse(**task)

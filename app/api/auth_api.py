@@ -34,7 +34,7 @@ def register(payload: RegisterRequest) -> TokenResponse:
     try:
         user = create_user(payload.username, hash_password(payload.password))
     except DuplicateUserError:
-        raise HTTPException(status_code=400, detail="Username already exists")
+        raise HTTPException(status_code=400, detail="该用户名已被注册")
     return _build_token_response(user)
 
 
@@ -44,7 +44,7 @@ def login(payload: LoginRequest) -> TokenResponse:
     if user is None or not user.get("password_hash") or not verify_password(payload.password, str(user["password_hash"])):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
+            detail="用户名或密码错误",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return _build_token_response(user)

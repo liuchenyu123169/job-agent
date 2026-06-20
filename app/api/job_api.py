@@ -25,7 +25,7 @@ def create_job(
     job_id = insert_job(job.company, job.title, job.jd_text, user_id=int(current_user["id"]))
     created_job = get_job_by_id(job_id, user_id=int(current_user["id"]))
     if created_job is None:
-        raise HTTPException(status_code=500, detail="Job created but not found")
+        raise HTTPException(status_code=500, detail="岗位创建后未找到")
     return JobCreateResponse(job_id=job_id, local_job_id=int(created_job["local_job_id"]))
 
 
@@ -42,7 +42,7 @@ def get_job_by_local(
 ) -> JobResponse:
     job = get_job_by_local_id(local_job_id, user_id=int(current_user["id"]))
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="岗位未找到")
     return JobResponse(**job)
 
 @router.get("/{job_id}", response_model=JobResponse)
@@ -52,5 +52,5 @@ def get_job(
 ) -> JobResponse:
     job = get_job_by_id(job_id, user_id=int(current_user["id"]))
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="岗位未找到")
     return JobResponse(**job)

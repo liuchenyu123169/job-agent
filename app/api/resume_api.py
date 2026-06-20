@@ -32,7 +32,7 @@ def create_resume(
     )
     resume = get_resume_by_id(resume_id, user_id=int(current_user["id"]))
     if resume is None:
-        raise HTTPException(status_code=500, detail="Resume created but not found")
+        raise HTTPException(status_code=500, detail="简历创建后未找到")
     return ResumeCreateResponse(
         resume_id=resume_id,
         local_resume_id=int(resume["local_resume_id"]),
@@ -50,13 +50,13 @@ async def upload_resume(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Failed to parse resume file") from exc
+        raise HTTPException(status_code=400, detail="简历文件解析失败") from exc
 
     file_name = file.filename or "uploaded_resume"
     resume_id = insert_resume(file_name, content, user_id=int(current_user["id"]))
     resume = get_resume_by_id(resume_id, user_id=int(current_user["id"]))
     if resume is None:
-        raise HTTPException(status_code=500, detail="Resume created but not found")
+        raise HTTPException(status_code=500, detail="简历创建后未找到")
     return ResumeUploadResponse(
         resume_id=resume_id,
         local_resume_id=int(resume["local_resume_id"]),
@@ -78,7 +78,7 @@ def get_resume_by_local(
 ) -> ResumeResponse:
     resume = get_resume_by_local_id(local_resume_id, user_id=int(current_user["id"]))
     if resume is None:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="简历未找到")
     return ResumeResponse(**resume)
 
 
@@ -89,5 +89,5 @@ def get_resume(
 ) -> ResumeResponse:
     resume = get_resume_by_id(resume_id, user_id=int(current_user["id"]))
     if resume is None:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="简历未找到")
     return ResumeResponse(**resume)

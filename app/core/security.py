@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET_KEY
@@ -39,5 +39,7 @@ def decode_access_token(token: str) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("Invalid token payload")
         return payload
+    except ExpiredSignatureError:
+        raise ValueError("token_expired")
     except JWTError as exc:
-        raise ValueError("Invalid or expired token") from exc
+        raise ValueError("token_invalid") from exc

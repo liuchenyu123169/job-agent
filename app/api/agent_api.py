@@ -49,16 +49,16 @@ def analyze_match(
     user_id = int(current_user["id"])
     resolved_resume_id = _resolve_resume_id(user_id, payload.resume_id, payload.local_resume_id)
     if resolved_resume_id is None:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="简历未找到")
     resolved_job_id = _resolve_job_id(user_id, payload.job_id, payload.local_job_id)
     if resolved_job_id is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="岗位未找到")
     result = run_analyze_workflow(resolved_resume_id, resolved_job_id, user_id=user_id)
 
-    if result["error_msg"] == "Resume not found":
-        raise HTTPException(status_code=404, detail="Resume not found")
-    if result["error_msg"] == "Job not found":
-        raise HTTPException(status_code=404, detail="Job not found")
+    if result["error_msg"] == "简历未找到":
+        raise HTTPException(status_code=404, detail="简历未找到")
+    if result["error_msg"] == "岗位未找到":
+        raise HTTPException(status_code=404, detail="岗位未找到")
     return AgentAnalyzeResponse(task_id=result["task_id"], analysis=result["analysis"])
 
 
@@ -70,20 +70,20 @@ def optimize_resume(
     user_id = int(current_user["id"])
     resolved_resume_id = _resolve_resume_id(user_id, payload.resume_id, payload.local_resume_id)
     if resolved_resume_id is None:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="简历未找到")
     resolved_job_id = _resolve_job_id(user_id, payload.job_id, payload.local_job_id)
     if resolved_job_id is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="岗位未找到")
     result = run_optimize_resume_workflow(
         resolved_resume_id,
         resolved_job_id,
         user_id=user_id,
     )
 
-    if result["error_msg"] == "Resume not found":
-        raise HTTPException(status_code=404, detail="Resume not found")
-    if result["error_msg"] == "Job not found":
-        raise HTTPException(status_code=404, detail="Job not found")
+    if result["error_msg"] == "简历未找到":
+        raise HTTPException(status_code=404, detail="简历未找到")
+    if result["error_msg"] == "岗位未找到":
+        raise HTTPException(status_code=404, detail="岗位未找到")
     return AgentOptimizeResumeResponse(
         task_id=result["task_id"],
         optimization=result["optimization"],
@@ -97,10 +97,10 @@ def generate_interview_questions(
     user_id = int(current_user["id"])
     resolved_resume_id = _resolve_resume_id(user_id, payload.resume_id, payload.local_resume_id)
     if resolved_resume_id is None:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="简历未找到")
     resolved_job_id = _resolve_job_id(user_id, payload.job_id, payload.local_job_id)
     if resolved_job_id is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="岗位未找到")
     result = run_interview_questions_workflow(
         resolved_resume_id,
         resolved_job_id,
@@ -108,10 +108,10 @@ def generate_interview_questions(
         enable_rag=payload.enable_rag,
     )
 
-    if result["error_msg"] == "Resume not found":
-        raise HTTPException(status_code=404, detail="Resume not found")
-    if result["error_msg"] == "Job not found":
-        raise HTTPException(status_code=404, detail="Job not found")
+    if result["error_msg"] == "简历未找到":
+        raise HTTPException(status_code=404, detail="简历未找到")
+    if result["error_msg"] == "岗位未找到":
+        raise HTTPException(status_code=404, detail="岗位未找到")
     return AgentGenerateInterviewQuestionsResponse(
         task_id=result["task_id"],
         questions=result["interview_questions"]
@@ -126,7 +126,7 @@ def recommend_jobs(
     user_id = int(current_user["id"])
     resolved_resume_id = _resolve_resume_id(user_id, payload.resume_id, payload.local_resume_id)
     if resolved_resume_id is None:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(status_code=404, detail="简历未找到")
     result = recommend_jobs_for_resume(
         resume_id=resolved_resume_id,
         top_k=payload.top_k,
@@ -134,8 +134,8 @@ def recommend_jobs(
         user_id=user_id,
     )
 
-    if result["error_msg"] == "Resume not found":
-        raise HTTPException(status_code=404, detail="Resume not found")
+    if result["error_msg"] == "简历未找到":
+        raise HTTPException(status_code=404, detail="简历未找到")
     return RecommendJobsResponse(
         resume_id=result["resume_id"],
         top_k=result["top_k"],

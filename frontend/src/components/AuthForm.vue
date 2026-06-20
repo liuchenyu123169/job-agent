@@ -1,5 +1,6 @@
 <script setup>
 import { inject, reactive, ref } from "vue";
+import { getErrorMessage } from "./utils.js";
 
 const api = inject("api");
 const setMessage = inject("setMessage");
@@ -28,7 +29,7 @@ async function submit() {
     authForm.username = ""; authForm.password = "";
     emit("loggedIn");
     await Promise.all([fetchResumeList(), fetchJobList(), fetchTasks()]);
-  } catch (err) { setMessage(err?.message || "认证失败", true); }
+  } catch (err) { setMessage(getErrorMessage(err), true); }
   finally { loadingMap.auth = false; }
 }
 </script>
