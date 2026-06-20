@@ -16,6 +16,23 @@ def get_conn() -> sqlite3.Connection:
         raise RuntimeError(f"Failed to connect to database: {DB_PATH}") from exc
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def get_db():
+    """数据库连接上下文管理器，自动 commit/rollback/close。"""
+    conn = get_conn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _get_table_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
     cursor.execute(f"PRAGMA table_info({table_name})")
     return {str(row[1]) for row in cursor.fetchall()}
@@ -190,6 +207,20 @@ def init_db() -> None:
         )
 
         cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_trace (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                span_name TEXT NOT NULL,
+                duration_ms REAL NOT NULL,
+                metadata TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES agent_task (id)
+            )
+            """
+        )
+
+        cursor.execute(
             f"""
             CREATE TABLE IF NOT EXISTS copilot_session (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -242,6 +273,9 @@ def init_db() -> None:
 
         # 安全迁移：is_admin 列
         _ensure_column(cursor, "user", "is_admin", "INTEGER DEFAULT 0")
+
+        # 安全迁移：agent_task 表加 trace_json 列（链路追踪数据）
+        _ensure_column(cursor, "agent_task", "trace_json", "TEXT")
 
         # 确保已存在的 default_user 也是管理员 + 有默认密码
         cursor.execute(

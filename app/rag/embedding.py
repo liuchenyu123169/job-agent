@@ -2,6 +2,9 @@ import os
 
 from openai import OpenAI
 
+from app.observability import traced
+from app.observability.tracer import add_trace_metadata
+
 
 EMBEDDING_BATCH_SIZE = 64
 
@@ -39,6 +42,7 @@ class EmbeddingClient:
 
         return embeddings
 
+    @traced("embed_query")
     def embed_query(self, query: str) -> list[float]:
         if not query or not query.strip():
             raise RuntimeError("query must not be empty")
@@ -47,4 +51,6 @@ class EmbeddingClient:
             model=self.model,
             input=query.strip(),
         )
+        add_trace_metadata("embedding_model", self.model)
+        add_trace_metadata("query_length", len(query.strip()))
         return response.data[0].embedding if response.data else []

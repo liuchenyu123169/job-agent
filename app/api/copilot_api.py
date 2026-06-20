@@ -7,6 +7,7 @@
 多轮对话：通过 session_id 续接已有会话，自动加载历史消息。
 """
 
+import asyncio
 import json
 import logging
 from typing import AsyncGenerator
@@ -194,7 +195,10 @@ async def _direct_agents(
             })
             logger.info("[Copilot:direct] executing %s", name)
 
-            result = agent.run(
+            # asyncio.to_thread: 将同步阻塞的 agent.run() 丢给线程池，
+            # 释放事件循环去处理其他请求 / SSE 推送
+            result = await asyncio.to_thread(
+                agent.run,
                 goal=f"执行 {name}",
                 resume_id=int(context.resume_id or 0),
                 job_id=int(context.job_id or 0),
@@ -388,7 +392,7 @@ def get_session(
     user_id = int(current_user["id"])
     session = get_copilot_session(session_id, user_id=user_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="会话未找到")
     return session
 
 
@@ -417,7 +421,7 @@ def get_session_messages(
     user_id = int(current_user["id"])
     session = get_copilot_session(session_id, user_id=user_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="会话未找到")
     rows = get_conversation_messages(session_id, user_id)
     result: list[dict] = []
     for row in rows:
@@ -448,7 +452,7 @@ def delete_session(
     user_id = int(current_user["id"])
     session = get_copilot_session(session_id, user_id=user_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="会话未找到")
     deleted = conversation_manager.clear_session(session_id, user_id)
     update_copilot_session(
         session_id=session_id, status="ARCHIVED", user_id=user_id,

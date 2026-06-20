@@ -4,6 +4,8 @@ import uuid
 
 import chromadb
 
+from app.observability import StructuredLogger, metrics, traced
+from app.observability.tracer import add_trace_metadata
 from app.rag.embedding import EmbeddingClient
 from app.rag.splitter import MIN_CHUNK_CONTENT_LENGTH
 
@@ -55,6 +57,7 @@ class ChromaKnowledgeStore:
         )
         return len(chunks)
 
+    @traced("rag_search")
     def search(self, query: str, top_k: int = 5) -> list[dict]:
         collection = self._get_collection()
         if collection is None:
@@ -102,6 +105,20 @@ class ChromaKnowledgeStore:
                 len(item["content"]),
             ),
         )
+        result = reranked[:top_k]
+
+        add_trace_metadata("query", query[:100])
+        add_trace_metadata("top_k", top_k)
+        add_trace_metadata("candidate_k", candidate_k)
+        add_trace_metadata("hit_count", len(result))
+
+        StructuredLogger.log_rag_query(
+            query=query,
+            hit_count=len(result),
+            candidate_k=candidate_k,
+        )
+        metrics.record_rag_query(duration_ms=0, hit_count=len(result))
+
         return [
             {
                 "content": item["content"],
@@ -110,7 +127,7 @@ class ChromaKnowledgeStore:
                 "title": item["title"],
                 "section_path": item["section_path"],
             }
-            for item in reranked[:top_k]
+            for item in result
         ]
 
     def _get_collection(self):

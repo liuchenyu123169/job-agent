@@ -15,6 +15,7 @@
   - Agent 间通信格式？→ 结构化 dict（success/data/error），不传原始 LLM 文本
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Awaitable, Callable
@@ -87,7 +88,8 @@ def _wrap_sub_agent_tool(agent: SubAgent) -> ToolDefinition:
         **kwargs,
     ) -> ToolResult:
         goal = kwargs.pop("goal", f"执行 {agent.name} 的默认任务")
-        result = agent.run(
+        result = await asyncio.to_thread(
+            agent.run,
             goal=str(goal),
             resume_id=int(resume_id),
             job_id=int(job_id),
@@ -141,7 +143,21 @@ def create_coordinator_graph(sub_agents: list[SubAgent]):
     def agent_node(state: PipelineState) -> dict[str, Any]:
         messages = state["messages"]
         if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=COORDINATOR_SYSTEM_PROMPT)] + list(messages)
+            ctx = state.get("context")
+            prompt = COORDINATOR_SYSTEM_PROMPT
+            # 注入当前上下文信息，避免 LLM 反复询问已有的简历/岗位
+            if ctx is not None:
+                ctx_info = []
+                if ctx.resume_id:
+                    ctx_info.append(f"- 当前简历 ID: {ctx.resume_id}")
+                if ctx.job_id:
+                    ctx_info.append(f"- 当前岗位 ID: {ctx.job_id}")
+                if ctx.personal_info:
+                    ctx_info.append(f"- 用户提供的个人信息: {ctx.personal_info[:200]}")
+                if ctx_info:
+                    prompt += "\n\n## 当前上下文（已由前端传入，无需再次询问）\n" + "\n".join(ctx_info)
+                    prompt += "\n调用子 Agent 时请直接传入这些 ID。"
+            messages = [SystemMessage(content=prompt)] + list(messages)
 
         tool_defs = tool_registry.get_function_definitions()
         response: AIMessage = invoke_llm_with_tools(messages, tool_defs)

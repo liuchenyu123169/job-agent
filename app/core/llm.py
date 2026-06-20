@@ -7,6 +7,8 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_openai import ChatOpenAI
 
 from app.core.config import MODEL_NAME, ZHIPU_BASE_URL, get_api_key
+from app.observability import StructuredLogger, metrics, traced
+from app.observability.tracer import add_trace_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +23,49 @@ def _build_llm(temperature: float = 0.7) -> ChatOpenAI:
     )
 
 
+def _extract_token_usage(response: AIMessage) -> dict[str, int]:
+    """从 LangChain AIMessage.response_metadata 提取真实 token_usage。"""
+    meta = getattr(response, "response_metadata", {}) or {}
+    usage = meta.get("token_usage", {})
+    return {
+        "tokens_in": usage.get("prompt_tokens", 0),
+        "tokens_out": usage.get("completion_tokens", 0),
+    }
+
+
+@traced("llm_call")
 def invoke_llm(prompt: str) -> str:
-    """纯文本 LLM 调用，返回字符串响应。"""
+    """纯文本 LLM 调用，返回字符串响应。自动记录耗时和 token 用量。"""
     llm = _build_llm()
     response = llm.invoke(prompt)
-    return str(response.content)
+    content = str(response.content)
+
+    usage = _extract_token_usage(response)
+    add_trace_metadata("model", MODEL_NAME)
+    add_trace_metadata("prompt_chars", len(prompt))
+    add_trace_metadata("response_chars", len(content))
+    add_trace_metadata("tokens_in", usage["tokens_in"])
+    add_trace_metadata("tokens_out", usage["tokens_out"])
+
+    # 使用字符级估算兜底
+    tokens_in = usage["tokens_in"] or len(prompt) // 3
+    tokens_out = usage["tokens_out"] or len(content) // 3
+
+    StructuredLogger.log_llm_call(
+        model=MODEL_NAME,
+        duration_ms=0,  # traced 装饰器已记录，这里用 0 避免重复
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        prompt_chars=len(prompt),
+        response_chars=len(content),
+    )
+    metrics.record_llm_call(
+        model=MODEL_NAME,
+        duration_ms=0,  # traced 已单独记录
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+    )
+    return content
 
 
 def bind_tools_to_llm(tool_definitions: list[dict[str, Any]]) -> ChatOpenAI:
@@ -36,6 +76,7 @@ def bind_tools_to_llm(tool_definitions: list[dict[str, Any]]) -> ChatOpenAI:
     return llm.bind_tools(langchain_tools)
 
 
+@traced("llm_call_with_tools")
 def invoke_llm_with_tools(
     messages: list[BaseMessage],
     tool_definitions: list[dict[str, Any]],
@@ -48,6 +89,15 @@ def invoke_llm_with_tools(
     """
     llm_with_tools = bind_tools_to_llm(tool_definitions)
     response = llm_with_tools.invoke(messages)
+
+    usage = _extract_token_usage(response)
+    total_chars = sum(len(str(m.content or "")) for m in messages)
+    tokens_in = usage["tokens_in"] or total_chars // 3
+    tokens_out = usage["tokens_out"] or len(str(response.content or "")) // 3
+    add_trace_metadata("model", MODEL_NAME)
+    add_trace_metadata("tokens_in", tokens_in)
+    add_trace_metadata("tokens_out", tokens_out)
+    metrics.record_llm_call(model=MODEL_NAME, duration_ms=0, tokens_in=tokens_in, tokens_out=tokens_out)
     return response
 
 
