@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import uuid
 
 import chromadb
@@ -59,6 +60,7 @@ class ChromaKnowledgeStore:
 
     @traced("rag_search")
     def search(self, query: str, top_k: int = 5) -> list[dict]:
+        t0 = time.monotonic()
         collection = self._get_collection()
         if collection is None:
             return []
@@ -112,12 +114,15 @@ class ChromaKnowledgeStore:
         add_trace_metadata("candidate_k", candidate_k)
         add_trace_metadata("hit_count", len(result))
 
+        duration_ms = (time.monotonic() - t0) * 1000
+        add_trace_metadata("duration_ms", duration_ms)
+
         StructuredLogger.log_rag_query(
             query=query,
             hit_count=len(result),
             candidate_k=candidate_k,
         )
-        metrics.record_rag_query(duration_ms=0, hit_count=len(result))
+        metrics.record_rag_query(duration_ms=duration_ms, hit_count=len(result))
 
         return [
             {

@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from app.core.constants import DEFAULT_USER_ID
 from app.db.crud import insert_agent_task
+from app.observability import metrics
 from app.prompt_engine import PromptManager
 from app.core.llm import stream_llm, invoke_llm
 
@@ -144,6 +145,7 @@ def save_success_task(
     user_id: int = DEFAULT_USER_ID,
     trace_spans: list[dict] | None = None,
 ) -> int:
+    metrics.record_task(task_type, "SUCCESS")
     return insert_agent_task(
         task_type=task_type,
         resume_id=resume_id,
@@ -166,6 +168,7 @@ def save_failed_task(
     user_id: int = DEFAULT_USER_ID,
     trace_spans: list[dict] | None = None,
 ) -> int:
+    metrics.record_task(task_type, "FAILED")
     logger.error("[TASK] %s failed: %s", task_type, error_msg)
     return insert_agent_task(
         task_type=task_type,

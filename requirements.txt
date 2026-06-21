@@ -16,3 +16,4 @@ pypdf
 python-docx
 jinja2
 pyyaml
+prometheus-fastapi-instrumentator

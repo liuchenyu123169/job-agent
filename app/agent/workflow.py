@@ -1,6 +1,5 @@
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -99,12 +98,14 @@ def _dedupe_key(item: dict[str, Any]) -> str:
     return f"{source}::{title or content[:50]}"
 
 def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    """RAG 知识检索节点（通用版）。
+    """RAG 知识检索节点（单次嵌入版）。
 
     流程：
-    1. 用正则从简历+JD 中提取技术术语（任何技术栈通用）
-    2. 按"术语"和"知识库来源×术语"两维度构造查询
-    3. 向量搜索 → 去重 → 按相似度排序 → 来源多样性选取 TOP 5
+    1. 用正则从简历+JD 中提取技术术语
+    2. 拼接为单个组合查询 → 一次 embedding API + 一次 ChromaDB 检索（top_k=30）
+    3. 去重 + 过滤过短内容 + 按分数排序
+    4. 来源多样性选取 TOP 5
+    5. 格式化输出
     """
     if state.get("error_msg"):
         return {}
@@ -130,68 +131,33 @@ def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
     job_terms = _extract_tech_terms(job_jd)
     resume_terms = _extract_tech_terms(resume_content)
     all_terms = list(dict.fromkeys(job_terms + resume_terms))  # 保序去重
-    kb_sources = _get_kb_source_names()
 
     _rag_log(f"[RAG] job_terms={job_terms}")
     _rag_log(f"[RAG] resume_terms={resume_terms}")
-    _rag_log(f"[RAG] kb_sources={kb_sources}")
 
-    # ── 2. 动态构造查询计划 ──
-    query_plan: list[tuple[str, str, int]] = []
+    # ── 2. 单次嵌入查询（替代多维度并发查询计划）──
+    if not all_terms:
+        all_terms = ["核心技术", "面试"]
 
-    # 维度A：纯术语作为查询
-    for term in all_terms:
-        query_plan.append((f"term:{term}", f"{term} 面试题", 2))
+    # 构造一个组合查询，一次 embedding + 一次 ChromaDB 检索
+    combined_query = "面试题 " + " ".join(all_terms[:8])
+    _rag_log(f"[RAG] combined_query={combined_query[:100]}")
 
-    # 维度B：知识库来源 × 前几个术语组合查询
-    top_terms = all_terms[:4]
-    for source in kb_sources:
-        prefix = f"{source} 面试"
-        if top_terms:
-            combined = f"{prefix} {' '.join(top_terms)}"
-        else:
-            combined = f"{prefix} 核心知识点"
-        query_plan.append((f"source×term:{source}", combined, 3))
-
-    # 兜底：如果术语和知识库都太少
-    if not query_plan:
-        query_plan.append(("fallback", "面试题 核心技术 原理", 5))
-
-    _rag_log(f"[RAG] query_plan count={len(query_plan)}")
-
-    # ── 3. 并发执行查询（线程池），合并结果 ──
-    merged_items: list[dict[str, Any]] = []
-    errors: list[str] = []
-
-    if query_plan:
-        with ThreadPoolExecutor(max_workers=min(len(query_plan), 8)) as pool:
-            future_to_name: dict = {}
-            for name, query_text, top_k in query_plan:
-                future = pool.submit(search_knowledge, query_text, top_k)
-                future_to_name[future] = name
-
-            for future in as_completed(future_to_name):
-                name = future_to_name[future]
-                try:
-                    items = future.result()
-                    _rag_log(f"[RAG] {name}_hits={len(items)}")
-                    merged_items.extend(items)
-                except Exception as exc:
-                    errors.append(f"{name}: {exc}")
-                    _rag_log(f"[RAG] query failed {name}: {exc}")
+    candidate_k = 30
+    merged_items = search_knowledge(combined_query, top_k=candidate_k)
+    _rag_log(f"[RAG] single_query hits={len(merged_items)}")
 
     if not merged_items:
-        _rag_log(f"[RAG] no results: errors={'|'.join(errors)}" if errors else "[RAG] no results")
         return {
             "knowledge_context": "",
             "knowledge_used": False,
             "knowledge_count": 0,
-            "rag_queries": [q for _, q, _ in query_plan],
+            "rag_queries": [combined_query],
             "rag_hit_titles": [],
             "rag_hit_sources": [],
         }
 
-    # ── 4. 去重 + 过滤过短内容 + 按向量分数排序 ──
+    # ── 3. 去重 + 过滤 + 排序 ──
     deduped: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for item in merged_items:
@@ -206,7 +172,7 @@ def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
 
     deduped.sort(key=lambda x: x.get("score") if x.get("score") is not None else 999.0)
 
-    # ── 5. 来源多样性选取 TOP 5 ──
+    # ── 4. 来源多样性选取 TOP 5 ──
     final_items: list[dict[str, Any]] = []
     source_counts: dict[str, int] = {}
     MAX_PER_SOURCE = 2
@@ -220,7 +186,7 @@ def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
         final_items.append(item)
         source_counts[source] = source_counts.get(source, 0) + 1
 
-    # ── 6. 格式化输出 ──
+    # ── 5. 格式化输出 ──
     blocks: list[str] = []
     hit_titles: list[str] = []
     hit_sources: list[str] = []
@@ -257,7 +223,7 @@ def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
             "knowledge_context": "",
             "knowledge_used": False,
             "knowledge_count": 0,
-            "rag_queries": [q for _, q, _ in query_plan],
+            "rag_queries": [combined_query],
             "rag_hit_titles": [],
             "rag_hit_sources": [],
         }
@@ -266,7 +232,7 @@ def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
         "knowledge_context": "\n\n".join(blocks),
         "knowledge_used": True,
         "knowledge_count": knowledge_count,
-        "rag_queries": [q for _, q, _ in query_plan],
+        "rag_queries": [combined_query],
         "rag_hit_titles": hit_titles,
         "rag_hit_sources": hit_sources,
     }

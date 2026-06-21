@@ -20,6 +20,9 @@ class MetricsCollector:
         self._llm_calls: list[dict] = []           # [{model, duration_ms, tokens_in, tokens_out}]
         self._rag_queries: list[dict] = []          # [{duration_ms, hit_count}]
         self._http_requests: dict[str, int] = defaultdict(int)  # {status_code: count}
+        self._task_results: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))  # {task_type: {status: count}}
+        self._tool_errors: dict[str, int] = defaultdict(int)  # {tool_name: error_count}
+        self._sse_chains: list[dict] = []           # [{agent, duration_ms}]
 
     def record_llm_call(self, model: str, duration_ms: float, tokens_in: int, tokens_out: int) -> None:
         self._llm_calls.append({
@@ -34,6 +37,15 @@ class MetricsCollector:
 
     def record_http(self, status: int) -> None:
         self._http_requests[str(status)] += 1
+
+    def record_task(self, task_type: str, status: str) -> None:
+        self._task_results[task_type][status] += 1
+
+    def record_tool_error(self, tool_name: str) -> None:
+        self._tool_errors[tool_name] += 1
+
+    def record_sse_chain(self, agent: str, duration_ms: float) -> None:
+        self._sse_chains.append({"agent": agent, "duration_ms": duration_ms})
 
     def summary(self) -> dict[str, Any]:
         """返回当前累积指标的摘要。"""
@@ -54,6 +66,16 @@ class MetricsCollector:
         rag_avg_duration = sum(q["duration_ms"] for q in self._rag_queries) / rag_total if rag_total else 0
         rag_avg_hits = sum(q["hit_count"] for q in self._rag_queries) / rag_total if rag_total else 0
 
+        # Task / Tool / SSE 统计
+        task_total = sum(sum(d.values()) for d in self._task_results.values())
+        task_success = sum(d.get("SUCCESS", 0) for d in self._task_results.values())
+        task_by_type = {
+            k: dict(v) for k, v in self._task_results.items()
+        }
+        tool_error_total = sum(self._tool_errors.values())
+        sse_total = len(self._sse_chains)
+        sse_avg_duration = sum(c["duration_ms"] for c in self._sse_chains) / sse_total if sse_total else 0
+
         return {
             "uptime_seconds": uptime_s,
             "llm": {
@@ -72,6 +94,19 @@ class MetricsCollector:
             "http": {
                 "total_requests": sum(self._http_requests.values()),
                 "by_status": dict(self._http_requests),
+            },
+            "task": {
+                "total": task_total,
+                "success_rate": round(task_success / task_total, 3) if task_total else 0,
+                "by_type": task_by_type,
+            },
+            "tool": {
+                "total_errors": tool_error_total,
+                "by_tool": dict(self._tool_errors),
+            },
+            "sse": {
+                "total_chains": sse_total,
+                "avg_duration_ms": round(sse_avg_duration, 1),
             },
         }
 

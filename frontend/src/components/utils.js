@@ -84,3 +84,64 @@ export async function withLoading(loadingMap, key, fn) {
   catch (err) { throw err; }
   finally { loadingMap[key] = false; }
 }
+
+/* ── Markdown → HTML（ChatPanel 和 AdminTasks 共用） ── */
+
+function _inline(s) {
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return s;
+}
+
+export function renderMarkdown(text) {
+  if (!text) return "";
+  text = text.replace(/([^\n])(\*\*[^*]+\*\*[：:])/g, "$1\n$2");
+  const lines = text.split("\n");
+  const out = [];
+  let inUl = false, inOl = false;
+  function closeLists() {
+    if (inUl) { out.push("</ul>"); inUl = false; }
+    if (inOl) { out.push("</ol>"); inOl = false; }
+  }
+  function peekNonEmpty(from) {
+    for (let j = from; j < lines.length; j++) {
+      if (lines[j].trim()) return lines[j].trim();
+    }
+    return null;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) {
+      const next = peekNonEmpty(i + 1);
+      if (inOl && next && /^\d+[\.\)]\s/.test(next)) continue;
+      if (inUl && next && /^[\-\*]\s(?!\*)/.test(next)) continue;
+      closeLists();
+      continue;
+    }
+    const headMatch = trimmed.match(/^(#{1,4})\s+(.+)/);
+    if (headMatch) {
+      closeLists();
+      const level = Math.min(headMatch[1].length + 1, 5);
+      out.push("<h" + level + ">" + _inline(headMatch[2]) + "</h" + level + ">");
+      continue;
+    }
+    const ulMatch = trimmed.match(/^[\-\*]\s(?!\*)(.+)/);
+    if (ulMatch) {
+      if (inOl) { out.push("</ol>"); inOl = false; }
+      if (!inUl) { out.push("<ul>"); inUl = true; }
+      out.push("<li>" + _inline(ulMatch[1]) + "</li>");
+      continue;
+    }
+    const olMatch = trimmed.match(/^\d+[\.\)]\s+(.+)/);
+    if (olMatch) {
+      if (inUl) { out.push("</ul>"); inUl = false; }
+      if (!inOl) { out.push("<ol>"); inOl = true; }
+      out.push("<li>" + _inline(olMatch[1]) + "</li>");
+      continue;
+    }
+    closeLists();
+    out.push("<p>" + _inline(trimmed) + "</p>");
+  }
+  closeLists();
+  return out.join("");
+}

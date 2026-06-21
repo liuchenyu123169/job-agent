@@ -26,7 +26,7 @@ def agent_node(state: PipelineState) -> dict[str, Any]:
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
 
     tool_defs = tool_registry.get_function_definitions()
-    response: AIMessage = invoke_llm_with_tools(messages, tool_defs)
+    response: AIMessage = invoke_llm_with_tools(messages, tool_defs, model_key="fast")
 
     return {"messages": messages + [response]}
 

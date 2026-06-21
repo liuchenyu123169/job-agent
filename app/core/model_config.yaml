@@ -1,0 +1,36 @@
+# 模型配置 — 按任务类型路由到不同模型
+# 环境变量引用格式：${ENV_VAR}，启动时自动替换
+
+models:
+  fast:
+    provider: zhipu
+    model: glm-4-flash
+    base_url: ${ZHIPU_BASE_URL}
+    api_key_env: ZHIPU_API_KEY
+    max_tokens: 1024
+    temperature: 0.3
+  primary:
+    provider: zhipu
+    model: glm-4
+    base_url: ${ZHIPU_BASE_URL}
+    api_key_env: ZHIPU_API_KEY
+    max_tokens: 4096
+    temperature: 0.7
+  fallback:
+    provider: deepseek
+    model: deepseek-chat
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    max_tokens: 4096
+    temperature: 0.7
+
+# 默认使用的模型 key（invoke_llm / stream_llm 不传 model_key 时生效）
+default: primary
+
+concurrency:
+  max_concurrent: 5
+
+retry:
+  max_attempts: 3
+  backoff_base: 1.0
+  backoff_max: 30.0

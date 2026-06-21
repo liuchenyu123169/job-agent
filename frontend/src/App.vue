@@ -35,16 +35,19 @@ const adminSidebarItems = [
   { key: "admin_jobs",      label: "全局岗位",   icon: "💼" },
   { key: "admin_tasks",     label: "全局任务",   icon: "📋" },
   { key: "admin_sessions",  label: "全局会话",   icon: "💬" },
-  { key: "admin_traces",    label: "链路追踪",   icon: "🔍" },
+  { key: "admin_traces",    label: "链路追踪",   icon: "⏱" },
   { key: "knowledge",       label: "RAG 知识库", icon: "⚙️" },
   { key: "evaluation",      label: "评测",       icon: "📊" },
 ];
+const adminMode = ref(true);  // 管理员默认在管理端
 
 const sidebarItems = computed(() => {
-  if (currentUser.value?.is_admin) return adminSidebarItems;
+  if (currentUser.value?.is_admin) {
+    return adminMode.value ? adminSidebarItems : baseSidebarItems;
+  }
   return baseSidebarItems;
 });
-const activeView = ref("chat");  // 当前主视图：chat | resume | job | recommend | task | admin_* | knowledge | evaluation
+const activeView = ref(null);  // 当前主视图，登录后根据角色设置默认值
 
 /* ── 会话管理（侧边栏历史列表） ── */
 const currentSessionId = ref(getStoredSessionId());
@@ -65,7 +68,7 @@ async function loadSessions() {
 async function selectSession(sessionId) {
   currentSessionId.value = sessionId;
   storeSessionId(sessionId);
-  activeView.value = "chat"; // 切回对话视图
+  if (!adminMode.value) activeView.value = "chat";
   if (chatRef.value) {
     await chatRef.value.loadSessionHistory(sessionId);
   }
@@ -201,7 +204,12 @@ async function restoreSession() {
   loadingMap.restore = true;
   try {
     currentUser.value = await authApi.getCurrentUser();
-    chatRef.value?.welcome(currentUser.value?.username);
+    if (!activeView.value) {
+      activeView.value = currentUser.value?.is_admin ? "admin_dashboard" : "chat";
+    }
+    if (!currentUser.value?.is_admin || !adminMode.value) {
+      chatRef.value?.welcome(currentUser.value?.username);
+    }
     await Promise.all([fetchResumeList(), fetchJobList(), fetchTasks()]);
   } catch (err) { clearSession(false); setMessage(getErrorMessage(err), true); }
   finally { loadingMap.restore = false; }
@@ -314,8 +322,8 @@ onUnmounted(() => setUnauthorizedHandler(null));
               <span class="nav-icon">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
             </button>
-            <!-- 会话历史（对话子列表） -->
-            <div class="session-list" v-if="sessions.length > 0">
+            <!-- 会话历史（仅用户模式显示） -->
+            <div class="session-list" v-if="!adminMode && sessions.length > 0">
               <div class="session-list-header" @click="sessionsExpanded = !sessionsExpanded">
                 <span class="session-list-arrow">{{ sessionsExpanded ? '▾' : '▸' }}</span>
                 <span>历史对话</span>
@@ -333,13 +341,17 @@ onUnmounted(() => setUnauthorizedHandler(null));
               </div>
             </div>
           </nav>
-          <div class="sidebar-panel">
+          <div v-if="!adminMode" class="sidebar-panel">
             <span>当前简历</span>
             <strong>{{ currentResume.localId ? `#${currentResume.localId}` : "未选择" }}</strong>
           </div>
-          <div class="sidebar-panel">
+          <div v-if="!adminMode" class="sidebar-panel">
             <span>当前岗位</span>
             <strong>{{ currentJob.localId ? `#${currentJob.localId}` : "未选择" }}</strong>
+          </div>
+          <div v-if="currentUser?.is_admin" class="sidebar-panel" style="cursor:pointer" @click="adminMode = !adminMode; activeView = adminMode ? 'admin_dashboard' : 'chat'">
+            <span style="font-size:11px;color:#94a3b8">{{ adminMode ? '📋 管理模式' : '💬 用户模式' }}</span>
+            <strong style="font-size:12px;color:#93c5fd">{{ adminMode ? '切换到 Copilot →' : '← 返回管理' }}</strong>
           </div>
           <div class="sidebar-footer">
             <div class="user-chip-inline"><span>👤</span><strong>{{ currentUser?.username }}</strong></div>
@@ -499,6 +511,7 @@ onUnmounted(() => setUnauthorizedHandler(null));
 :global(.task-detail-head) { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 :global(.task-detail h5) { margin: 0 0 10px; font-size: 14px; }
 :global(.code-block) { margin: 0; max-height: 240px; overflow: auto; border-radius: 10px; padding: 14px; background: #0f172a; color: #e2e8f0; font-size: 12px; line-height: 1.6; }
+:global(.output-card) { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
 :global(.error-block) { background: #450a0a; color: #fecaca; }
 :global(hr) { border: none; border-top: 1px solid #e5e7eb; margin: 18px 0; }
 

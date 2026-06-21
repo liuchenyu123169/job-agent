@@ -1,6 +1,6 @@
 <script setup>
 import { inject, ref, reactive, nextTick, onMounted } from "vue";
-import { COPILOT_REPORT_MARKER } from "./utils.js";
+import { COPILOT_REPORT_MARKER, renderMarkdown } from "./utils.js";
 
 const api = inject("api");
 const setMessage = inject("setMessage");
@@ -106,85 +106,6 @@ function preNormalize(step) {
 }
 
 /* ── 简单 Markdown → HTML ── */
-function _inline(s) {
-  // 先处理行内代码 `xxx`（必须在加粗之前，避免 **`xx`** 冲突）
-  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-  // 加粗 **xxx**
-  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  return s;
-}
-
-function renderMarkdown(text) {
-  if (!text) return "";
-  // 预处理：确保 **标题**： 这类块级加粗标题前有换行
-  text = text.replace(/([^\n])(\*\*[^*]+\*\*[：:])/g, "$1\n$2");
-
-  const lines = text.split("\n");
-  const out = [];
-  let inUl = false, inOl = false;
-
-  function closeLists() {
-    if (inUl) { out.push("</ul>"); inUl = false; }
-    if (inOl) { out.push("</ol>"); inOl = false; }
-  }
-
-  // 偷看后续非空行
-  function peekNonEmpty(from) {
-    for (let j = from; j < lines.length; j++) {
-      if (lines[j].trim()) return lines[j].trim();
-    }
-    return null;
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-
-    // 空行
-    if (!trimmed) {
-      const next = peekNonEmpty(i + 1);
-      // 有序列表：如果下个非空行还是数字开头，保持列表打开
-      if (inOl && next && /^\d+[\.\)]\s/.test(next)) continue;
-      // 无序列表：同理
-      if (inUl && next && /^[\-\*]\s(?!\*)/.test(next)) continue;
-      closeLists();
-      continue;
-    }
-
-    // 标题 # / ## / ### / ####
-    const headMatch = trimmed.match(/^(#{1,4})\s+(.+)/);
-    if (headMatch) {
-      closeLists();
-      const level = Math.min(headMatch[1].length + 1, 5); // #→h2, ##→h3, ###→h4, ####→h5
-      out.push("<h" + level + ">" + _inline(headMatch[2]) + "</h" + level + ">");
-      continue;
-    }
-
-    // 无序列表
-    const ulMatch = trimmed.match(/^[\-\*]\s(?!\*)(.+)/);
-    if (ulMatch) {
-      if (inOl) { out.push("</ol>"); inOl = false; }
-      if (!inUl) { out.push("<ul>"); inUl = true; }
-      out.push("<li>" + _inline(ulMatch[1]) + "</li>");
-      continue;
-    }
-
-    // 有序列表
-    const olMatch = trimmed.match(/^\d+[\.\)]\s+(.+)/);
-    if (olMatch) {
-      if (inUl) { out.push("</ul>"); inUl = false; }
-      if (!inOl) { out.push("<ol>"); inOl = true; }
-      out.push("<li>" + _inline(olMatch[1]) + "</li>");
-      continue;
-    }
-
-    // 普通行
-    closeLists();
-    out.push("<p>" + _inline(trimmed) + "</p>");
-  }
-  closeLists();
-  return out.join("");
-}
-
 /* ── 消息操作 ── */
 function addMessage(msg) {
   messages.value.push(msg);

@@ -100,7 +100,7 @@ def list_all_resumes(
 ) -> dict:
     conn = get_conn()
     try:
-        base = """SELECT r.id, r.user_id, r.local_resume_id, r.file_name, r.created_at
+        base = """SELECT r.id, r.user_id, r.local_resume_id, r.file_name, r.content, r.created_at
                   FROM resume r"""
         params: tuple = ()
         if username:
@@ -123,7 +123,7 @@ def list_all_jobs(
 ) -> dict:
     conn = get_conn()
     try:
-        base = """SELECT j.id, j.user_id, j.local_job_id, j.company, j.title, j.created_at
+        base = """SELECT j.id, j.user_id, j.local_job_id, j.company, j.title, j.jd_text, j.created_at
                   FROM job j"""
         params: tuple = ()
         if username:
@@ -210,7 +210,7 @@ def list_all_sessions(
 ) -> dict:
     conn = get_conn()
     try:
-        base = """SELECT s.id, s.user_id, s.goal, s.status, s.created_at, s.updated_at
+        base = """SELECT s.id, s.user_id, s.goal, s.status, s.task_ids_json, s.created_at, s.updated_at
                   FROM copilot_session s"""
         params: tuple = ()
         if username:

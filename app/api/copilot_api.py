@@ -10,7 +10,8 @@
 import asyncio
 import json
 import logging
-import queue  # 线程安全队列（asyncio.Queue 不跨线程安全）
+import queue
+import time
 from typing import AsyncGenerator
 
 _REPORT_MARKER = "__COPILOT_REPORT__"
@@ -26,6 +27,7 @@ from app.agents import (
     search_agent,
 )
 from app.api.deps import get_current_user
+from app.observability import metrics
 from app.api.stream_utils import error_event, final_event, sse_event, step_complete_event, step_start_event, step_token_event
 from app.copilot.conversation import conversation_manager
 from app.copilot.state import PipelineContext, PipelineState
@@ -210,9 +212,11 @@ async def _direct_agents(
     """
     try:
         for name in agent_names:
+            t_agent = time.monotonic()
             agent = _AGENT_MAP.get(name)
             if agent is None:
                 yield error_event(name, f"未知的子 Agent: {name}")
+                metrics.record_tool_error(name)
                 continue
 
             yield step_start_event(name, {
@@ -295,6 +299,9 @@ async def _direct_agents(
                 yield step_complete_event(name, result["data"])
             else:
                 yield error_event(name, result.get("error") or "unknown error")
+                metrics.record_tool_error(name)
+
+            metrics.record_sse_chain(name, (time.monotonic() - t_agent) * 1000)
 
         report = summarize_result(context)
         report["session_id"] = session_id

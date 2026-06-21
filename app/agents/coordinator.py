@@ -160,7 +160,7 @@ def create_coordinator_graph(sub_agents: list[SubAgent]):
             messages = [SystemMessage(content=prompt)] + list(messages)
 
         tool_defs = tool_registry.get_function_definitions()
-        response: AIMessage = invoke_llm_with_tools(messages, tool_defs)
+        response: AIMessage = invoke_llm_with_tools(messages, tool_defs, model_key="fast")
         return {"messages": messages + [response]}
 
     # ── router：LLM 是否调用工具 ──

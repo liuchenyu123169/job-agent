@@ -48,6 +48,15 @@ app.include_router(evaluation_router)
 app.include_router(task_router)
 app.include_router(admin_router)
 
+# Prometheus 指标暴露（/metrics 端点）
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator().instrument(app).expose(app)
+except ImportError:
+    logging.getLogger(__name__).warning(
+        "prometheus-fastapi-instrumentator 未安装，/metrics 端点不可用"
+    )
+
 
 @app.on_event("startup")
 def on_startup() -> None:

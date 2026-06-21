@@ -4,6 +4,16 @@ from app.rag.loader import load_knowledge_files
 from app.rag.splitter import split_documents
 from app.rag.vector_store import ChromaKnowledgeStore
 
+# ChromaDB client 单例（避免每次 search 重建 PersistentClient）
+_store: ChromaKnowledgeStore | None = None
+
+
+def get_store() -> ChromaKnowledgeStore:
+    global _store
+    if _store is None:
+        _store = ChromaKnowledgeStore()
+    return _store
+
 
 def build_knowledge_base() -> dict:
     knowledge_dir = os.getenv("KNOWLEDGE_DIR", "data/knowledge")
@@ -21,5 +31,4 @@ def build_knowledge_base() -> dict:
 
 
 def search_knowledge(query: str, top_k: int = 5) -> list[dict]:
-    store = ChromaKnowledgeStore()
-    return store.search(query=query, top_k=top_k)
+    return get_store().search(query=query, top_k=top_k)
