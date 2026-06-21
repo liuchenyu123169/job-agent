@@ -51,3 +51,8 @@ def final_event(summary: str, task_ids: list[int], session_id: int | None = None
     if session_id is not None:
         data["session_id"] = session_id
     return sse_event("final", data)
+
+
+def step_token_event(agent: str, token: str) -> str:
+    """Token 级流式推送事件。"""
+    return sse_event("step_token", {"agent": agent, "token": token})

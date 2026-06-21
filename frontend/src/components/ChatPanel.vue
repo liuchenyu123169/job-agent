@@ -1,6 +1,6 @@
 <script setup>
-import { inject, ref, nextTick, onMounted } from "vue";
-import { normalizeToArray, normalizeOutputFields, COPILOT_REPORT_MARKER } from "./utils.js";
+import { inject, ref, reactive, nextTick, onMounted } from "vue";
+import { COPILOT_REPORT_MARKER } from "./utils.js";
 
 const api = inject("api");
 const setMessage = inject("setMessage");
@@ -55,27 +55,28 @@ function convertHistoryToMessages(historyMsgs) {
       result.push({ role: "user", text: m.content || "" });
     } else if (m.role === "copilot" || m.role === "assistant") {
       const content = m.content || "";
-      // 检测结构化报告标记
       if (content.startsWith(COPILOT_REPORT_MARKER)) {
         try {
           const report = JSON.parse(content.slice(COPILOT_REPORT_MARKER.length));
-          const copilotMsg = { role: "copilot", steps: [], final: report, error: null, _collapsed: false };
+          const copilotMsg = reactive({ role: "copilot", steps: [], final: report, error: null, _collapsed: false, _streamText: {} });
           for (const rawStep of report.steps || []) {
-            // 包装为 { summary: rawStep } 匹配 live SSE 的 s.summary = data.result 结构
             const s = { tool: rawStep.tool, status: "done", summary: rawStep };
-            preNormalize(s);
             copilotMsg.steps.push(s);
+            // 恢复流式文本（新格式：text 字段）
+            for (const key of ["analysis_text", "optimization_text", "questions_text", "generated_resume"]) {
+              if (rawStep[key]) {
+                copilotMsg._streamText[rawStep.tool] = (copilotMsg._streamText[rawStep.tool] || "") + rawStep[key];
+              }
+            }
           }
           result.push(copilotMsg);
         } catch {
-          // JSON 解析失败 → 剥离标记前缀，不泄漏原始标记给用户
           result.push({ role: "copilot", text: content.slice(COPILOT_REPORT_MARKER.length) });
         }
       } else {
         result.push({ role: "copilot", text: content });
       }
     }
-    // tool 消息不展示给用户（内部执行细节）
   }
   return result;
 }
@@ -102,6 +103,86 @@ const container = ref(null);
 function preNormalize(step) {
   if (!step || !step.summary) return;
   Object.assign(step.summary, normalizeOutputFields(step.summary));
+}
+
+/* ── 简单 Markdown → HTML ── */
+function _inline(s) {
+  // 先处理行内代码 `xxx`（必须在加粗之前，避免 **`xx`** 冲突）
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // 加粗 **xxx**
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return s;
+}
+
+function renderMarkdown(text) {
+  if (!text) return "";
+  // 预处理：确保 **标题**： 这类块级加粗标题前有换行
+  text = text.replace(/([^\n])(\*\*[^*]+\*\*[：:])/g, "$1\n$2");
+
+  const lines = text.split("\n");
+  const out = [];
+  let inUl = false, inOl = false;
+
+  function closeLists() {
+    if (inUl) { out.push("</ul>"); inUl = false; }
+    if (inOl) { out.push("</ol>"); inOl = false; }
+  }
+
+  // 偷看后续非空行
+  function peekNonEmpty(from) {
+    for (let j = from; j < lines.length; j++) {
+      if (lines[j].trim()) return lines[j].trim();
+    }
+    return null;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    // 空行
+    if (!trimmed) {
+      const next = peekNonEmpty(i + 1);
+      // 有序列表：如果下个非空行还是数字开头，保持列表打开
+      if (inOl && next && /^\d+[\.\)]\s/.test(next)) continue;
+      // 无序列表：同理
+      if (inUl && next && /^[\-\*]\s(?!\*)/.test(next)) continue;
+      closeLists();
+      continue;
+    }
+
+    // 标题 # / ## / ### / ####
+    const headMatch = trimmed.match(/^(#{1,4})\s+(.+)/);
+    if (headMatch) {
+      closeLists();
+      const level = Math.min(headMatch[1].length + 1, 5); // #→h2, ##→h3, ###→h4, ####→h5
+      out.push("<h" + level + ">" + _inline(headMatch[2]) + "</h" + level + ">");
+      continue;
+    }
+
+    // 无序列表
+    const ulMatch = trimmed.match(/^[\-\*]\s(?!\*)(.+)/);
+    if (ulMatch) {
+      if (inOl) { out.push("</ol>"); inOl = false; }
+      if (!inUl) { out.push("<ul>"); inUl = true; }
+      out.push("<li>" + _inline(ulMatch[1]) + "</li>");
+      continue;
+    }
+
+    // 有序列表
+    const olMatch = trimmed.match(/^\d+[\.\)]\s+(.+)/);
+    if (olMatch) {
+      if (inUl) { out.push("</ul>"); inUl = false; }
+      if (!inOl) { out.push("<ol>"); inOl = true; }
+      out.push("<li>" + _inline(olMatch[1]) + "</li>");
+      continue;
+    }
+
+    // 普通行
+    closeLists();
+    out.push("<p>" + _inline(trimmed) + "</p>");
+  }
+  closeLists();
+  return out.join("");
 }
 
 /* ── 消息操作 ── */
@@ -150,7 +231,7 @@ function send() {
   addMessage({ role: "user", text });
   input.value = "";
 
-  const copilotMsg = { role: "copilot", steps: [], final: null, error: null, _collapsed: false };
+  const copilotMsg = reactive({ role: "copilot", steps: [], final: null, error: null, _collapsed: false, _streamText: {} });
   addMessage(copilotMsg);
   running.value = true;
 
@@ -177,17 +258,27 @@ function send() {
         }
       },
       onStepStart(data) {
-        const label = (toolMetaMap.value[data.tool] || {}).description || data.tool;
+        const shortNames = { resume_agent: "简历分析与优化", interview_agent: "面试题生成", search_agent: "岗位推荐" };
+        const label = shortNames[data.tool] || (toolMetaMap.value[data.tool] || {}).description || data.tool;
         copilotMsg.steps.push({ tool: data.tool, label, status: "running", summary: null, error: null });
+      },
+      onStepProgress(data) {
+        const s = copilotMsg.steps.find(x => x.tool === data.agent && x.status === "running");
+        if (s) s.label = `${s.label.split(" — ")[0]} — ${data.state_summary || '...'}`;
       },
       onStepComplete(data) {
         const s = copilotMsg.steps.find(x => x.tool === data.tool && x.status === "running");
-        if (s) { s.status = "done"; s.summary = data.result; preNormalize(s); }
+        if (s) { s.status = "done"; s.summary = data.result; }
       },
       onStepError(data) {
         const s = copilotMsg.steps.find(x => x.tool === data.tool && x.status === "running");
         if (s) { s.status = "error"; s.error = data.error; }
         copilotMsg.error = data.error;
+      },
+      onStepToken(data) {
+        const key = data.agent;
+        if (!copilotMsg._streamText[key]) copilotMsg._streamText[key] = "";
+        copilotMsg._streamText[key] += data.token;
       },
       onFinal(data) {
         copilotMsg.final = data;
@@ -228,97 +319,14 @@ defineExpose({ messages, welcome, send, loadSessionHistory });
 
         <!-- Copilot 步骤消息 -->
         <div v-else-if="msg.steps" class="msg-card">
-          <div class="msg-card-title">
-            <span v-if="!msg.final && !msg.error">🤖 执行中...</span>
-            <span v-else-if="msg.error">❌ 执行出错</span>
-            <span v-else>✅ 执行完毕</span>
-            <button v-if="msg.final && !msg.error" class="btn-toggle-detail" @click="msg._collapsed = !msg._collapsed">
-              {{ msg._collapsed ? '展开 ▼' : '收起 ▲' }}
-            </button>
-          </div>
           <div v-for="step in msg.steps" :key="step.tool" class="step-block" :class="'step-' + step.status">
             <div class="step-row">
-              <span class="step-icon">{{ step.status === 'running' ? '⏳' : step.status === 'done' ? '✅' : '❌' }}</span>
-              <span class="step-label">{{ step.label }}</span>
-              <span v-if="step.status === 'done' && step.summary" class="step-summary-inline">
-                {{ step.summary.analysis?.match_score !== undefined ? step.summary.analysis.match_score + ' 分' : '' }}
-                {{ step.summary.tech_count !== undefined ? step.summary.tech_count + step.summary.project_count + ' 道题' : '' }}
-                {{ step.summary.generated_resume ? '已生成' : '' }}
-                {{ step.summary.optimization?.summary ? '已完成' : '' }}
-              </span>
+              <span class="step-icon">{{ step.status === 'running' ? '⏳' : step.status === 'done' ? '' : '❌' }}</span>
+              <span class="step-label">{{ step.status === 'running' ? step.label : '' }}</span>
             </div>
 
-            <!-- 详情区（可折叠） -->
-            <template v-if="step.status === 'done'">
-            <!-- 匹配分析 / 简历优化 结果 -->
-            <div v-if="step.summary?.analysis" class="step-detail" v-show="!msg._collapsed">
-              <div v-if="step.summary.analysis.match_score !== undefined" class="match-score-big">
-                {{ step.summary.analysis.match_score }}<span>分</span>
-              </div>
-              <div v-if="step.summary.analysis.match_reason" class="detail-item">
-                <p>{{ step.summary.analysis.match_reason }}</p>
-              </div>
-              <div v-if="step.summary.analysis.advantages?.length" class="detail-item">
-                <h6>优势</h6>
-                <ul><li v-for="a in step.summary.analysis.advantages" :key="a">{{ a }}</li></ul>
-              </div>
-              <div v-if="step.summary.analysis.weaknesses?.length" class="detail-item">
-                <h6>不足</h6>
-                <ul><li v-for="w in step.summary.analysis.weaknesses" :key="w">{{ w }}</li></ul>
-              </div>
-              <div v-if="step.summary.analysis.suggestions?.length" class="detail-item">
-                <h6>建议</h6>
-                <ul><li v-for="s in step.summary.analysis.suggestions" :key="s">{{ s }}</li></ul>
-              </div>
-            </div>
-
-            <div v-if="step.summary?.optimization" class="step-detail" v-show="!msg._collapsed">
-              <p v-if="step.summary.optimization.summary" class="detail-text">{{ step.summary.optimization.summary }}</p>
-              <div v-if="step.summary.optimization.skill_keywords?.length" class="detail-item">
-                <h6>技能关键词</h6>
-                <div class="tag-list"><span v-for="k in step.summary.optimization.skill_keywords" :key="k" class="tag">{{ k }}</span></div>
-              </div>
-              <div v-if="step.summary.optimization.project_suggestions?.length" class="detail-item">
-                <h6>项目建议</h6>
-                <ul><li v-for="p in step.summary.optimization.project_suggestions" :key="p">{{ p }}</li></ul>
-              </div>
-              <div v-if="step.summary.optimization.resume_rewrite_suggestions?.length" class="detail-item">
-                <h6>改写建议</h6>
-                <ul><li v-for="r in step.summary.optimization.resume_rewrite_suggestions" :key="r">{{ r }}</li></ul>
-              </div>
-              <div v-if="step.summary.optimization.risk_points?.length" class="detail-item">
-                <h6>风险点</h6>
-                <ul><li v-for="r in step.summary.optimization.risk_points" :key="r">{{ r }}</li></ul>
-              </div>
-            </div>
-
-            <!-- 生成简历结果 -->
-            <div v-if="step.summary?.generated_resume" class="step-detail" v-show="!msg._collapsed">
-              <div class="detail-item">
-                <h6>📄 生成的简历</h6>
-                <div class="generated-resume-text" v-html="step.summary.generated_resume.replace(/\n/g, '<br>')"></div>
-              </div>
-            </div>
-
-            <!-- 面试题结果 -->
-            <div v-if="step.summary?.questions" class="step-detail" v-show="!msg._collapsed">
-              <template v-for="group in [
-                {key:'technical_questions',label:'技术问题'},
-                {key:'project_questions',label:'项目问题'},
-                {key:'behavior_questions',label:'行为问题'},
-                {key:'risk_questions',label:'风险问题'}
-              ]" :key="group.key">
-                <div v-if="step.summary.questions[group.key]?.length" class="detail-item">
-                  <h6>{{ group.label }}（{{ step.summary.questions[group.key].length }}）</h6>
-                  <div v-for="(q, qi) in step.summary.questions[group.key]" :key="qi" class="question-item">
-                    <strong>{{ qi + 1 }}. {{ q.question || q.title || q }}</strong>
-                    <small v-if="q.why_ask"><em>为什么问：</em>{{ q.why_ask }}</small>
-                    <small v-if="q.answer_hint"><em>回答提示：</em>{{ q.answer_hint }}</small>
-                  </div>
-                </div>
-              </template>
-            </div>
-            </template>  <!-- v-if="step.status === 'done'" -->
+            <!-- 流式文本（生成中 + 完成后统一由此显示） -->
+            <div v-if="msg._streamText[step.tool]" class="stream-text" :class="{ 'stream-done': step.status === 'done' }" v-html="renderMarkdown(msg._streamText[step.tool]) + (step.status === 'running' ? '<span class=\'cursor-blink\'>▊</span>' : '')"></div>
           </div>
           <div v-if="msg.final" class="msg-final"><p>{{ msg.final.summary }}</p></div>
           <div v-if="msg.error" class="msg-error">{{ msg.error }}</div>

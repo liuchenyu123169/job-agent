@@ -10,6 +10,7 @@
 import asyncio
 import json
 import logging
+import queue  # 线程安全队列（asyncio.Queue 不跨线程安全）
 from typing import AsyncGenerator
 
 _REPORT_MARKER = "__COPILOT_REPORT__"
@@ -25,7 +26,7 @@ from app.agents import (
     search_agent,
 )
 from app.api.deps import get_current_user
-from app.api.stream_utils import error_event, final_event, step_complete_event, step_start_event
+from app.api.stream_utils import error_event, final_event, sse_event, step_complete_event, step_start_event, step_token_event
 from app.copilot.conversation import conversation_manager
 from app.copilot.state import PipelineContext, PipelineState
 from app.copilot.summarizer import summarize_result
@@ -168,6 +169,31 @@ def _save_report(session_id, user_id, report, preexisting_messages=None, goal=No
     conversation_manager.save_messages(session_id, user_id, messages)
 
 
+def _summarize_node_state(node_name: str, state: dict) -> str:
+    """从节点状态提取一行可读摘要（供 step_progress SSE 事件使用）。"""
+    if state.get("error_msg"):
+        return f"出错: {state['error_msg'][:60]}"
+    if node_name.startswith("llm"):
+        return "LLM 分析中..."
+    if node_name.startswith("save"):
+        return "保存结果..."
+    if node_name.startswith("load"):
+        return "加载数据..."
+    if node_name.startswith("build"):
+        return "构建提示词..."
+    if node_name.startswith("parse"):
+        return "解析结果..."
+    if node_name.startswith("retrieve"):
+        return f"检索知识库... (命中{state.get('knowledge_count', 0)}条)"
+    if node_name.startswith("run_match"):
+        return "匹配分析中..."
+    if node_name.startswith("run_optimize"):
+        return "简历优化中..."
+    if node_name.startswith("run_search"):
+        return "岗位搜索中..."
+    return "执行中..."
+
+
 # ═══════════════════════════════════════════════════════════════
 # 路径 1: 意图明确 → 直接跑子 Agent，零 LLM 路由
 # ═══════════════════════════════════════════════════════════════
@@ -193,17 +219,77 @@ async def _direct_agents(
                 "resume_id": context.resume_id,
                 "job_id": context.job_id,
             })
-            logger.info("[Copilot:direct] executing %s", name)
+            logger.info("[Copilot:direct] streaming %s", name)
 
-            # asyncio.to_thread: 将同步阻塞的 agent.run() 丢给线程池，
-            # 释放事件循环去处理其他请求 / SSE 推送
-            result = await asyncio.to_thread(
-                agent.run,
+            # 双队列：progress（节点进度）+ token（LLM 逐字输出）
+            progress_q: queue.Queue = queue.Queue()
+            token_q: queue.Queue = queue.Queue()
+
+            def on_step(node_name: str, duration_ms: float) -> None:
+                progress_q.put(("step", node_name, duration_ms))
+
+            def on_token(t: str) -> None:
+                token_q.put(t)
+
+            task = asyncio.create_task(agent.run_stream_async(
                 goal=f"执行 {name}",
                 resume_id=int(context.resume_id or 0),
                 job_id=int(context.job_id or 0),
                 user_id=user_id,
-            )
+                on_step=on_step,
+                on_token=on_token,
+            ))
+
+            loop = asyncio.get_running_loop()
+
+            # 合并排水：一次取空两队列，批量发 token 减少 SSE 事件量
+            def _drain_all() -> tuple[list[tuple[str, str, float]], list[str]]:
+                steps: list[tuple[str, str, float]] = []
+                tokens: list[str] = []
+                while True:
+                    try:
+                        steps.append(progress_q.get_nowait())
+                    except queue.Empty:
+                        break
+                while True:
+                    try:
+                        tokens.append(token_q.get_nowait())
+                    except queue.Empty:
+                        break
+                return steps, tokens
+
+            while not task.done():
+                steps, tokens = await loop.run_in_executor(None, _drain_all)
+                # 发进度事件
+                for _, node_name, duration_ms in steps:
+                    yield sse_event("step_progress", {
+                        "agent": name,
+                        "node": node_name,
+                        "duration_ms": duration_ms,
+                        "state_summary": _summarize_node_state(node_name, {}),
+                    })
+                # 发 token 事件（批量合并成一段）
+                if tokens:
+                    yield step_token_event(name, "".join(tokens))
+
+                # 空队列时短暂 sleep，避免忙等
+                if not steps and not tokens:
+                    await asyncio.sleep(0.05)
+
+            result = await task
+
+            # task 完成后清空残留
+            steps, tokens = await loop.run_in_executor(None, _drain_all)
+            for _, node_name, duration_ms in steps:
+                yield sse_event("step_progress", {
+                    "agent": name,
+                    "node": node_name,
+                    "duration_ms": duration_ms,
+                    "state_summary": _summarize_node_state(node_name, {}),
+                })
+            if tokens:
+                yield step_token_event(name, "".join(tokens))
+
             if result["success"] and result.get("data"):
                 context.record_result(name, result["data"])
                 yield step_complete_event(name, result["data"])

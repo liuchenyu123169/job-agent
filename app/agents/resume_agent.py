@@ -29,6 +29,40 @@ RESUME_AGENT_SYSTEM_PROMPT = """\
 请直接按顺序执行，不需要额外思考或规划。结果中包含匹配分数和优化建议。
 """
 
+from app.agent.workflow import analyze_graph_async, optimize_resume_graph_async
+
+async def _run_match_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+    if state.get("error_msg"):
+      return {}
+    logger.info("[ResumeAgent] 步骤1: 匹配分析 (async)")
+    final_state = await analyze_graph_async.ainvoke({
+      "user_id": state["user_id"],
+      "resume_id": state["resume_id"],
+      "job_id": state["job_id"],
+    })
+    if final_state.get("error_msg"):
+      return {"error_msg": final_state["error_msg"]}
+    return {
+      "analysis_text": final_state.get("analysis_text", ""),
+      "task_id": final_state.get("task_id"),
+    }
+
+async def _run_optimize_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+    if state.get("error_msg"):
+      return {}
+    logger.info("[ResumeAgent] 步骤2: 简历优化 (async)")
+    final_state = await optimize_resume_graph_async.ainvoke({
+      "user_id": state["user_id"],
+      "resume_id": state["resume_id"],
+      "job_id": state["job_id"],
+    })
+    if final_state.get("error_msg"):
+      return {"error_msg": final_state["error_msg"]}
+    return {
+      "analysis_text": state.get("analysis_text"),
+      "optimization_text": final_state.get("optimization_text", ""),
+      "task_id": final_state.get("task_id"),
+    }
 
 def _run_match_node(state: AgentAnalyzeState) -> dict[str, Any]:
     """执行匹配分析，复用现有 workflow。"""
@@ -43,7 +77,7 @@ def _run_match_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if result.get("error_msg"):
         return {"error_msg": result["error_msg"]}
     return {
-        "analysis": result.get("analysis"),
+        "analysis_text": result.get("analysis_text", ""),
         "task_id": result.get("task_id"),
     }
 
@@ -61,7 +95,8 @@ def _run_optimize_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if result.get("error_msg"):
         return {"error_msg": result["error_msg"]}
     return {
-        "optimization": result.get("optimization"),
+        "analysis_text": state.get("analysis_text"),  # 保留上一步的匹配分析结果
+        "optimization_text": result.get("optimization_text", ""),
         "task_id": result.get("task_id"),
     }
 
@@ -85,6 +120,15 @@ class ResumeAgent(SubAgent):
         wf = StateGraph(AgentAnalyzeState)
         wf.add_node("run_match", _trace_node("run_match", _run_match_node))
         wf.add_node("run_optimize", _trace_node("run_optimize", _run_optimize_node))
+        wf.add_edge(START, "run_match")
+        wf.add_conditional_edges("run_match", _route_after_match, {"run_optimize": "run_optimize", END: END})
+        wf.add_edge("run_optimize", END)
+        return wf.compile()
+
+    def build_pipeline_async(self):
+        wf = StateGraph(AgentAnalyzeState)
+        wf.add_node("run_match", _run_match_node_async)  # ← async 版
+        wf.add_node("run_optimize", _run_optimize_node_async)  # ← async 版
         wf.add_edge(START, "run_match")
         wf.add_conditional_edges("run_match", _route_after_match, {"run_optimize": "run_optimize", END: END})
         wf.add_edge("run_optimize", END)

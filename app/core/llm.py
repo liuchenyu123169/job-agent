@@ -1,7 +1,7 @@
 """LLM 调用层 — 支持纯文本调用和带工具的 function-calling 调用。"""
 
 import logging
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_openai import ChatOpenAI
@@ -118,3 +118,11 @@ def _langchain_tool_from_definition(tool_def: dict[str, Any]) -> dict[str, Any]:
         "description": func.get("description", ""),
         "parameters": func.get("parameters", {"type": "object", "properties": {}}),
     }
+
+async def stream_llm(prompt: str) -> AsyncGenerator[str, None]:
+    """逐 token 流式返回 LLM 输出"""
+    llm = _build_llm()
+    async for chunk in llm.astream(prompt):
+        content = chunk.content
+        if isinstance(content, str) and content:
+            yield content

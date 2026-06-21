@@ -6,13 +6,13 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.common import _trace_node,  analyze_resume_job, get_prompt_manager, parse_llm_json_output, save_success_task
+from app.agent.common import _trace_node,  analyze_resume_job, get_prompt_manager, parse_llm_json_output, save_success_task, analyze_resume_job_async
 from app.agent.state import AgentAnalyzeState, make_initial_state
 from app.core.llm import invoke_llm
 from app.db.crud import get_job_by_id, get_resume_by_id
-from app.observability.tracer import get_current_spans, traced
 from app.db.crud import insert_task_traces
 from app.rag.rag_service import search_knowledge
+from app.agent.common import _stream_llm_with_callback
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,6 @@ def _dedupe_key(item: dict[str, Any]) -> str:
     title = str(item.get("title") or "").strip()
     content = str(item.get("content") or "").strip()
     return f"{source}::{title or content[:50]}"
-
 
 def retrieve_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
     """RAG 知识检索节点（通用版）。
@@ -313,22 +312,33 @@ def llm_analyze_node(state: AgentAnalyzeState) -> dict[str, Any]:
     return {"analysis": analysis}
 
 
+async def llm_analyze_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+    """流式调用 LLM，推送 token 到回调，返回完整文本。"""
+    if state.get("error_msg"):
+        return {}
+    analysis = await analyze_resume_job_async(
+        resume_content=state["resume"]["content"],
+        job_jd=state["job"]["jd_text"],
+    )
+    return {"analysis": analysis}
+
 def parse_result_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
-
-    return {"analysis": state.get("analysis") or {}}
+    analysis = state.get("analysis") or {}
+    return {"analysis_text": analysis.get("text", "") or ""}
 
 
 def save_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
+    text = state.get("analysis_text") or ""
     task_id = save_success_task(
         task_type="MATCH_ANALYZE",
         resume_id=state["resume_id"],
         job_id=state["job_id"],
-        output_data=state["analysis"],
+        output_data={"text": text[:2000]},
         input_data={
             "resume_id": state["resume_id"],
             "job_id": state["job_id"],
@@ -340,7 +350,7 @@ def save_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     )
     spans = state.get("trace_spans", [])
     insert_task_traces(task_id, spans)
-    return {"task_id": task_id}
+    return {"task_id": task_id, "analysis_text": text}
 
 
 def build_optimize_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
@@ -362,25 +372,28 @@ def llm_optimize_node(state: AgentAnalyzeState) -> dict[str, Any]:
     raw_output = invoke_llm(state["prompt"])
     return {"raw_output": raw_output}
 
+async def llm_optimize_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+    if state.get("error_msg"):
+        return {}
+    raw = await _stream_llm_with_callback(state["prompt"])
+    return {"raw_output": raw}
 
 def parse_optimization_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
-
-    raw_output = state["raw_output"] or ""
-    optimization = parse_llm_json_output(raw_output)
-    return {"optimization": optimization}
+    return {"optimization_text": state.get("raw_output", "") or ""}
 
 
 def save_optimize_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
+    text = state.get("optimization_text") or ""
     task_id = save_success_task(
         task_type="RESUME_OPTIMIZE",
         resume_id=state["resume_id"],
         job_id=state["job_id"],
-        output_data=state["optimization"],
+        output_data={"text": text[:2000]},
         input_data={
             "resume_id": state["resume_id"],
             "job_id": state["job_id"],
@@ -392,7 +405,7 @@ def save_optimize_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     )
     spans = state.get("trace_spans", [])
     insert_task_traces(task_id, spans)
-    return {"task_id": task_id}
+    return {"task_id": task_id, "analysis_text": state.get("analysis_text"), "optimization_text": text}
 
 
 def build_interview_questions_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
@@ -414,24 +427,28 @@ def llm_generate_questions_node(state: AgentAnalyzeState) -> dict[str, Any]:
     raw_output = invoke_llm(state["prompt"])
     return {"raw_output": raw_output}
 
+async def llm_generate_questions_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+    if state.get("error_msg"):
+        return {}
+    raw_output = await _stream_llm_with_callback(state["prompt"])
+    return {"raw_output": raw_output}
 
 def parse_questions_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
-    raw_output = state["raw_output"] or ""
-    interview_questions = parse_llm_json_output(raw_output)
-    return {"interview_questions": interview_questions}
+    return {"questions_text": state.get("raw_output", "") or ""}
 
 
 def save_questions_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
 
+    text = state.get("questions_text") or ""
     task_id = save_success_task(
         task_type="INTERVIEW_QUESTIONS",
         resume_id=state["resume_id"],
         job_id=state["job_id"],
-        output_data=state["interview_questions"],
+        output_data={"text": text[:2000]},
         input_data={
             "resume_id": state["resume_id"],
             "job_id": state["job_id"],
@@ -449,7 +466,7 @@ def save_questions_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     )
     spans = state.get("trace_spans", [])
     insert_task_traces(task_id, spans)
-    return {"task_id": task_id}
+    return {"task_id": task_id, "questions_text": text}
 
 
 def _route_on_error(state: AgentAnalyzeState) -> str:
@@ -535,7 +552,7 @@ def run_analyze_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str,
     final_state = analyze_graph.invoke(initial_state)
     return {
         "task_id": final_state.get("task_id"),
-        "analysis": final_state.get("analysis"),
+        "analysis_text": final_state.get("analysis_text", ""),
         "error_msg": final_state.get("error_msg"),
     }
 
@@ -545,7 +562,7 @@ def run_optimize_resume_workflow(resume_id: int, job_id: int, user_id: int) -> d
     final_state = optimize_resume_graph.invoke(initial_state)
     return {
         "task_id": final_state.get("task_id"),
-        "optimization": final_state.get("optimization"),
+        "optimization_text": final_state.get("optimization_text", ""),
         "error_msg": final_state.get("error_msg"),
     }
 
@@ -598,6 +615,13 @@ def llm_generate_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
     raw_output = invoke_llm(state["prompt"])
     return {"raw_output": raw_output}
 
+async def llm_generate_resume_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+    """调用 LLM 生成完整简历。"""
+    if state.get("error_msg"):
+        return {}
+
+    raw_output = await _stream_llm_with_callback(state["prompt"])
+    return {"raw_output": raw_output}
 
 def parse_generated_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
     """解析生成的简历文本（简历生成输出纯文本/Markdown，非 JSON）。"""
@@ -640,7 +664,7 @@ def save_generate_resume_task_node(state: AgentAnalyzeState) -> dict[str, Any]:
     )
     spans = state.get("trace_spans", [])
     insert_task_traces(task_id, spans)
-    return {"task_id": task_id}
+    return {"task_id": task_id, "interview_questions": state.get("interview_questions"), "generated_resume": state.get("generated_resume")}
 
 
 def _route_after_resume_load(state: AgentAnalyzeState) -> str:
@@ -711,6 +735,80 @@ def run_interview_questions_workflow(
     final_state = interview_graph.invoke(initial_state)
     return {
         "task_id": final_state.get("task_id"),
-        "interview_questions": final_state.get("interview_questions"),
+        "questions_text": final_state.get("questions_text", ""),
         "error_msg": final_state.get("error_msg"),
     }
+
+# ═══════════════════════════════════════════════════════════════
+# 异步图（Token 级流式用）
+# ═══════════════════════════════════════════════════════════════
+
+# ── analyze 异步图 ──
+_analyze_async = StateGraph(AgentAnalyzeState)
+_analyze_async.add_node("load_resume", _trace_node("load_resume", load_resume_node))
+_analyze_async.add_node("load_job", _trace_node("load_job", load_job_node))
+_analyze_async.add_node("build_prompt", _trace_node("build_prompt", build_prompt_node))
+_analyze_async.add_node("llm_analyze", llm_analyze_node_async)       # ← async
+_analyze_async.add_node("parse_result", _trace_node("parse_result", parse_result_node))
+_analyze_async.add_node("save_task", _trace_node("save_task", save_task_node))
+_analyze_async.add_edge(START, "load_resume")
+_analyze_async.add_conditional_edges("load_resume", _route_on_error, {"load_job": "load_job", END: END})
+_analyze_async.add_conditional_edges("load_job", _route_after_job, {"build_prompt": "build_prompt", END: END})
+_analyze_async.add_edge("build_prompt", "llm_analyze")
+_analyze_async.add_edge("llm_analyze", "parse_result")
+_analyze_async.add_edge("parse_result", "save_task")
+_analyze_async.add_edge("save_task", END)
+analyze_graph_async = _analyze_async.compile()
+
+# ── optimize 异步图 ──
+_optimize_async = StateGraph(AgentAnalyzeState)
+_optimize_async.add_node("load_resume", _trace_node("load_resume", load_resume_node))
+_optimize_async.add_node("load_job", _trace_node("load_job", load_job_node))
+_optimize_async.add_node("build_optimize_prompt", _trace_node("build_optimize_prompt", build_optimize_prompt_node))
+_optimize_async.add_node("llm_optimize", llm_optimize_node_async)     # ← async
+_optimize_async.add_node("parse_optimization", _trace_node("parse_optimization", parse_optimization_node))
+_optimize_async.add_node("save_optimize_task", _trace_node("save_optimize_task", save_optimize_task_node))
+_optimize_async.add_edge(START, "load_resume")
+_optimize_async.add_conditional_edges("load_resume", _route_on_error, {"load_job": "load_job", END: END})
+_optimize_async.add_conditional_edges("load_job", _route_after_job_for_optimize, {"build_optimize_prompt": "build_optimize_prompt", END: END})
+_optimize_async.add_edge("build_optimize_prompt", "llm_optimize")
+_optimize_async.add_edge("llm_optimize", "parse_optimization")
+_optimize_async.add_edge("parse_optimization", "save_optimize_task")
+_optimize_async.add_edge("save_optimize_task", END)
+optimize_resume_graph_async = _optimize_async.compile()
+
+# ── interview 异步图 ──
+_interview_async = StateGraph(AgentAnalyzeState)
+_interview_async.add_node("load_resume", _trace_node("load_resume", load_resume_node))
+_interview_async.add_node("load_job", _trace_node("load_job", load_job_node))
+_interview_async.add_node("retrieve_knowledge", _trace_node("retrieve_knowledge", retrieve_knowledge_node))
+_interview_async.add_node("build_interview_questions_prompt", _trace_node("build_interview_questions_prompt", build_interview_questions_prompt_node))
+_interview_async.add_node("llm_interview", llm_generate_questions_node_async)  # ← async
+_interview_async.add_node("parse_questions", _trace_node("parse_questions", parse_questions_node))
+_interview_async.add_node("save_questions_task", _trace_node("save_questions_task", save_questions_task_node))
+_interview_async.add_edge(START, "load_resume")
+_interview_async.add_conditional_edges("load_resume", _route_on_error, {"load_job": "load_job", END: END})
+_interview_async.add_conditional_edges("load_job", _route_after_job_for_interview, {"retrieve_knowledge": "retrieve_knowledge", END: END})
+_interview_async.add_edge("retrieve_knowledge", "build_interview_questions_prompt")
+_interview_async.add_edge("build_interview_questions_prompt", "llm_interview")
+_interview_async.add_edge("llm_interview", "parse_questions")
+_interview_async.add_edge("parse_questions", "save_questions_task")
+_interview_async.add_edge("save_questions_task", END)
+interview_graph_async = _interview_async.compile()
+
+# ── generate_resume 异步图 ──
+_generate_async = StateGraph(AgentAnalyzeState)
+_generate_async.add_node("load_or_prepare_resume", _trace_node("load_or_prepare_resume", load_or_prepare_resume_node))
+_generate_async.add_node("load_job", _trace_node("load_job", load_job_node))
+_generate_async.add_node("build_generate_resume_prompt", _trace_node("build_generate_resume_prompt", build_generate_resume_prompt_node))
+_generate_async.add_node("llm_generate_resume", llm_generate_resume_node_async)  # ← async
+_generate_async.add_node("parse_generated_resume", _trace_node("parse_generated_resume", parse_generated_resume_node))
+_generate_async.add_node("save_generate_resume_task", _trace_node("save_generate_resume_task", save_generate_resume_task_node))
+_generate_async.add_edge(START, "load_or_prepare_resume")
+_generate_async.add_conditional_edges("load_or_prepare_resume", _route_after_resume_load, {"load_job": "load_job", END: END})
+_generate_async.add_conditional_edges("load_job", _route_after_job_for_generate, {"build_generate_resume_prompt": "build_generate_resume_prompt", END: END})
+_generate_async.add_edge("build_generate_resume_prompt", "llm_generate_resume")
+_generate_async.add_edge("llm_generate_resume", "parse_generated_resume")
+_generate_async.add_edge("parse_generated_resume", "save_generate_resume_task")
+_generate_async.add_edge("save_generate_resume_task", END)
+generate_resume_graph_async = _generate_async.compile()

@@ -17,7 +17,6 @@ from app.observability.tracer import get_request_id, get_trace_id
 
 logger = logging.getLogger("observability")
 
-
 def _base_record(event: str, **fields: Any) -> dict[str, Any]:
     """构建基础日志记录，注入 request_id 和 trace_id。"""
     return {

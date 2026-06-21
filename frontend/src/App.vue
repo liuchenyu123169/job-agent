@@ -532,6 +532,19 @@ onUnmounted(() => setUnauthorizedHandler(null));
 :global(.step-icon) { width: 20px; }
 :global(.step-label) { flex: 1; font-size: 13px; }
 :global(.step-detail) { margin-top: 8px; padding: 12px 14px; background: #f8fafc; border-radius: 10px; border: 1px solid #e5e7eb; }
+:global(.stream-text) { margin-top: 4px; font-size: 14px; line-height: 1.7; color: #334155; }
+:global(.stream-text.stream-done) { color: #0f172a; }
+:global(.stream-text h2) { font-size: 20px; font-weight: 700; margin: 16px 0 6px; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+:global(.stream-text h3) { font-size: 17px; font-weight: 700; margin: 14px 0 4px; color: #1e293b; }
+:global(.stream-text h4) { font-size: 15px; font-weight: 600; margin: 10px 0 2px; color: #334155; }
+:global(.stream-text h5) { font-size: 14px; font-weight: 600; margin: 8px 0 2px; color: #475569; }
+:global(.stream-text ul, .stream-text ol) { margin: 2px 0; padding-left: 18px; }
+:global(.stream-text li) { margin: 1px 0; line-height: 1.6; }
+:global(.stream-text p) { margin: 2px 0; }
+:global(.stream-text strong) { font-weight: 700; color: #0f172a; }
+:global(.stream-text code) { background: #f1f5f9; padding: 1px 5px; border-radius: 3px; font-size: 13px; font-family: 'JetBrains Mono', 'Consolas', monospace; color: #1e293b; }
+:global(.cursor-blink) { color: #2563eb; animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 :global(.match-score-big) { font-size: 32px; font-weight: 800; color: #2563eb; text-align: center; padding: 12px 0; }
 :global(.match-score-big span) { font-size: 16px; font-weight: 600; color: #64748b; }
 :global(.detail-item) { margin-top: 10px; }

@@ -92,6 +92,10 @@ class SearchAgent(SubAgent):
         wf.add_edge("run_search", END)
         return wf.compile()
 
+    def build_pipeline_async(self):
+        # 搜索 Agent 无 LLM 调用，直接复用同步图
+        return self._graph
+
 
 # 全局单例
 search_agent = SearchAgent()

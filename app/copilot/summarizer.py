@@ -26,7 +26,7 @@ def summarize_result(
         step_summary = _summarize_step(tool_name, step_result)
         steps.append(step_summary)
 
-        # 同时拼装可读文本摘要（单次遍历）
+        # 同时拼装可读文本摘要
         part = _step_text(tool_name, step_result)
         if part:
             text_parts.append(part)
@@ -41,104 +41,84 @@ def summarize_result(
     }
 
 
-# ── 各工具的摘要提取（结构化 + 文本） ──
-# 注意：这里按数据结构检测而非按 tool_name 匹配。
-# 因为在 direct agent 路径中，tool_name 是 agent 名（如 "resume_agent"）而非工具名（如 "match_analyze"）。
-
 def _summarize_step(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
-    """对单个工具/Agent 的执行结果生成结构化摘要。
-
-    除计算元数据外，还保留原始数据字段（供前端重建 step card）。
-    """
+    """对单个工具/Agent 的执行结果生成结构化摘要。"""
     base: dict[str, Any] = {"tool": tool_name, "task_id": result.get("task_id")}
 
-    # ── 按数据结构检测结果类型 ──
+    # ── Markdown 文本字段（新格式） ──
+    for key, label in [
+        ("analysis_text", "analysis_text"),
+        ("optimization_text", "optimization_text"),
+        ("questions_text", "questions_text"),
+        ("generated_resume", "generated_resume"),
+    ]:
+        val = result.get(key)
+        if val and isinstance(val, str) and len(val) > 10:
+            base[label] = val
+            base[f"{label}_length"] = len(val)
+            base[f"{label}_preview"] = val[:200]
+
+    # ── 兼容旧 JSON 格式 ──
     analysis = result.get("analysis") or {}
-    optimization = result.get("optimization") or {}
-    questions = result.get("questions") or {}
-    generated_resume = result.get("generated_resume") or ""
-    items = result.get("items") or []
-    knowledge_count = result.get("count") or result.get("knowledge_count")
-
-    if analysis:
+    if analysis and isinstance(analysis, dict):
         base["match_score"] = analysis.get("match_score")
-        base["advantages_count"] = len(analysis.get("advantages") or [])
-        base["weaknesses_count"] = len(analysis.get("weaknesses") or [])
-        base["analysis"] = analysis  # 保留原始数据供前端重建
+        base["analysis"] = analysis
 
-    if optimization:
-        base["has_skill_keywords"] = bool(optimization.get("skill_keywords"))
-        base["has_rewrite_suggestions"] = bool(optimization.get("resume_rewrite_suggestions"))
-        base["optimization"] = optimization
-
-    if questions:
-        base["tech_count"] = len(questions.get("technical_questions") or [])
-        base["project_count"] = len(questions.get("project_questions") or [])
-        base["behavior_count"] = len(questions.get("behavior_questions") or [])
-        base["risk_count"] = len(questions.get("risk_questions") or [])
+    questions = result.get("questions") or {}
+    if questions and isinstance(questions, dict):
+        tech = len(questions.get("technical_questions") or [])
+        proj = len(questions.get("project_questions") or [])
+        base["tech_count"] = tech
+        base["project_count"] = proj
         base["questions"] = questions
 
-    if generated_resume:
-        base["resume_length"] = len(generated_resume)
-        base["resume_preview"] = generated_resume[:200]
-        base["generated_resume"] = generated_resume
-
+    items = result.get("items") or []
     if items:
         base["candidate_count"] = result.get("candidate_job_count", len(items))
-        base["top_match_score"] = items[0]["match_score"] if items else None
-        base["items"] = items
-
-    if knowledge_count:
-        base["hit_count"] = knowledge_count
 
     return base
 
 
 def _step_text(tool_name: str, data: dict[str, Any]) -> str | None:
-    """从单个工具/Agent 结果提取一行可读文本摘要（供 SSE final 事件使用）。
+    """从单个工具/Agent 结果提取一行可读文本摘要。"""
 
-    按数据内容检测，不按工具名称匹配。
-    """
-    # ── 匹配分析 ──
-    analysis = data.get("analysis") or {}
-    if analysis.get("match_score") is not None:
-        return f"匹配度 {analysis['match_score']} 分"
+    # ── Markdown 文本字段 ──
+    for key, label in [
+        ("analysis_text", "匹配分析"),
+        ("optimization_text", "简历优化"),
+        ("questions_text", "面试题"),
+    ]:
+        val = data.get(key)
+        if val and isinstance(val, str) and len(val) > 10:
+            # 取第一行有意义的内容
+            first_line = val.strip().split("\n")[0].strip("# *-")
+            return f"{label}：{first_line[:80]}"
 
-    # ── 简历优化 ──
-    optimization = data.get("optimization") or {}
-    if optimization.get("summary"):
-        return f"简历优化：{str(optimization['summary'])[:80]}"
-
-    # ── 面试题 ──
-    questions = data.get("questions") or {}
-    if questions:
-        tech = len(questions.get("technical_questions") or [])
-        proj = len(questions.get("project_questions") or [])
-        behav = len(questions.get("behavior_questions") or [])
-        risk = len(questions.get("risk_questions") or [])
-        total = tech + proj + behav + risk
-        if total:
-            return f"面试题 {total} 道（技术{tech}/项目{proj}）"
-
-    # ── 岗位推荐 ──
-    items = data.get("items") or []
-    if items:
-        return f"推荐 {len(items)} 个岗位"
-
-    # ── 简历生成 ──
     generated_resume = data.get("generated_resume") or ""
     if generated_resume:
         lines = generated_resume.strip().split("\n")
         title_line = next((l.strip("# ").strip() for l in lines if l.strip()), "")
         return f"简历已生成：{title_line[:80]}" if title_line else f"简历已生成（{len(generated_resume)} 字符）"
 
-    # ── 知识检索 ──
+    # ── 兼容旧 JSON 格式 ──
+    analysis = data.get("analysis") or {}
+    if analysis.get("match_score") is not None:
+        return f"匹配度 {analysis['match_score']} 分"
+
+    questions = data.get("questions") or {}
+    if questions:
+        tech = len(questions.get("technical_questions") or [])
+        proj = len(questions.get("project_questions") or [])
+        total = tech + proj
+        if total:
+            return f"面试题 {total} 道（技术{tech}/项目{proj}）"
+
+    items = data.get("items") or []
+    if items:
+        return f"推荐 {len(items)} 个岗位"
+
     count = data.get("count") or data.get("knowledge_count")
     if count:
         return f"检索到 {count} 条知识"
-
-    # ── 列表查询 ──
-    if data.get("count") is not None and data.get("items") is not None:
-        return f"查询到 {data['count']} 条记录"
 
     return None

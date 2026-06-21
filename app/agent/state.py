@@ -18,8 +18,11 @@ class AgentAnalyzeState(TypedDict):
     prompt: str | None
     raw_output: str | None
     analysis: dict[str, Any] | None
+    analysis_text: str | None
     optimization: dict[str, Any] | None
+    optimization_text: str | None
     interview_questions: dict[str, Any] | None
+    questions_text: str | None
     generated_resume: str | None
     task_id: int | None
     error_msg: str | None
@@ -45,8 +48,11 @@ def make_initial_state(user_id: int, resume_id: int, job_id: int, **overrides) -
         "prompt": None,
         "raw_output": None,
         "analysis": None,
+        "analysis_text": None,
         "optimization": None,
+        "optimization_text": None,
         "interview_questions": None,
+        "questions_text": None,
         "generated_resume": None,
         "task_id": None,
         "error_msg": None,

@@ -5,15 +5,30 @@ import time
 from typing import Any, Callable
 
 from app.core.constants import DEFAULT_USER_ID
-from app.core.llm import invoke_llm
 from app.db.crud import insert_agent_task
 from app.prompt_engine import PromptManager
+from app.core.llm import stream_llm, invoke_llm
 
 logger = logging.getLogger(__name__)
 
 
+from contextvars import ContextVar
+
+_step_callback: ContextVar = ContextVar("_step_callback", default=None)
+_token_callback: ContextVar = ContextVar("_token_callback", default=None)
+
+async def _stream_llm_with_callback(prompt: str):
+    """流式调用 LLM，推送 token 到回调，返回完整文本。"""
+    cb = _token_callback.get()
+    buffer: list[str] = []
+    async for token in stream_llm(prompt):
+        buffer.append(token)
+        if cb is not None:
+            cb(token)
+    return "".join(buffer)
+
 def _trace_node(name: str, fn: Callable) -> Callable:
-    """包装工作流节点函数，自动记录耗时到 state[\"trace_spans\"]。
+    """包装工作流节点函数，自动记录耗时 + 触发进度回调（供 SSE 流式推送）。
 
     用法:
         graph.add_node(\"load_resume\", _trace_node(\"load_resume\", load_resume_node))
@@ -24,6 +39,10 @@ def _trace_node(name: str, fn: Callable) -> Callable:
         dur = round((time.monotonic() - t0) * 1000, 2)
         spans = state.setdefault("trace_spans", [])
         spans.append({"name": name, "duration_ms": dur})
+        # 触发流式进度回调
+        cb = _step_callback.get()
+        if cb is not None:
+            cb(name, dur)
         return result
     wrapper.__name__ = fn.__name__
     return wrapper
@@ -57,15 +76,20 @@ def parse_llm_json_output(raw_output: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {"raw_output": raw_output}
 
-
 def analyze_resume_job(resume_content: str, job_jd: str) -> dict[str, Any]:
+    prompt = _prompt_manager.render("match_analyze",
+      resume_content=resume_content, job_jd=job_jd)
+    raw_output = invoke_llm(prompt)
+    return {"text": raw_output}
+
+async def analyze_resume_job_async(resume_content: str, job_jd: str) -> dict[str, Any]:
     prompt = _prompt_manager.render(
         "match_analyze",
         resume_content=resume_content,
         job_jd=job_jd,
     )
-    raw_output = invoke_llm(prompt)
-    return parse_llm_json_output(raw_output)
+    raw_output = await _stream_llm_with_callback(prompt)
+    return {"text": raw_output}
 
 
 def normalize_match_score(value: Any) -> int:

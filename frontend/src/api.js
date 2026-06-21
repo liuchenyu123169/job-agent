@@ -181,20 +181,20 @@ export const taskApi = {
 
 // ── Copilot SSE 流式调用 ──
 
-function _parseSSELines(lines, callbacks) {
-  let currentEvent = "";
+function _parseSSELines(lines, currentEvent, callbacks) {
   for (const line of lines) {
     if (line.startsWith("event: ")) {
       currentEvent = line.slice(7).trim();
     } else if (line.startsWith("data: ")) {
       try {
         _dispatchCopilotEvent(currentEvent, JSON.parse(line.slice(6)), callbacks);
-      } catch {
-        // 跳过无法解析的 JSON
+      } catch (e) {
+        console.warn("[SSE] parse error", currentEvent, e);
       }
       currentEvent = "";
     }
   }
+  return currentEvent;  // 返回给调用方，跨 chunk 保持
 }
 
 export function streamCopilot(payload, callbacks) {
@@ -241,13 +241,14 @@ export function streamCopilot(payload, callbacks) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let currentEvent = "";  // ⚠️ 闭包保持跨 chunk 状态
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
           // 流结束，flush 缓冲区残留数据
           if (buffer.trim()) {
-            _parseSSELines(buffer.split("\n"), callbacks);
+            _parseSSELines(buffer.split("\n"), currentEvent, callbacks);
           }
           break;
         }
@@ -256,7 +257,7 @@ export function streamCopilot(payload, callbacks) {
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        _parseSSELines(lines, callbacks);
+        currentEvent = _parseSSELines(lines, currentEvent, callbacks);
       }
     })
     .catch((err) => {
@@ -269,6 +270,7 @@ export function streamCopilot(payload, callbacks) {
 }
 
 function _dispatchCopilotEvent(event, data, callbacks) {
+  console.log("[SSE←]", event, new Date().toISOString().slice(11, 23), data);
   switch (event) {
     case "plan":
       callbacks.onPlan?.(data);
@@ -276,16 +278,23 @@ function _dispatchCopilotEvent(event, data, callbacks) {
     case "step_start":
       callbacks.onStepStart?.(data);
       break;
+    case "step_progress":
+      callbacks.onStepProgress?.(data);
+      break;
     case "step_complete":
       callbacks.onStepComplete?.(data);
       break;
     case "error":
       callbacks.onStepError?.(data);
       break;
+    case "step_token":
+      callbacks.onStepToken?.(data);
+      break;
     case "final":
       callbacks.onFinal?.(data);
       break;
     default:
+      console.warn("[SSE←] unknown event type:", event);
       break;
   }
 }

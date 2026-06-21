@@ -36,6 +36,24 @@ INTERVIEW_AGENT_SYSTEM_PROMPT = """\
 
 请直接按顺序执行，生成具体、可追问的技术面试题，避免泛泛而谈。
 """
+from app.agent.workflow import interview_graph_async
+
+async def _run_interview_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+    if state.get("error_msg"):
+      return {}
+    logger.info("[InterviewAgent] 面试题生成 (async)")
+    final_state = await interview_graph_async.ainvoke({
+      "user_id": state["user_id"],
+      "resume_id": state["resume_id"],
+      "job_id": state["job_id"],
+      "enable_rag": state.get("enable_rag", True),
+    })
+    if final_state.get("error_msg"):
+      return {"error_msg": final_state["error_msg"]}
+    return {
+      "questions_text": final_state.get("questions_text", ""),
+      "task_id": final_state.get("task_id"),
+    }
 
 
 def _route_after_load(state: AgentAnalyzeState) -> str:
@@ -73,6 +91,13 @@ class InterviewAgent(SubAgent):
         wf.add_edge("llm_generate", "parse_questions")
         wf.add_edge("parse_questions", "save_task")
         wf.add_edge("save_task", END)
+        return wf.compile()
+
+    def build_pipeline_async(self):
+        wf = StateGraph(AgentAnalyzeState)
+        wf.add_node("run_interview", _run_interview_node_async)
+        wf.add_edge(START, "run_interview")
+        wf.add_edge("run_interview", END)
         return wf.compile()
 
 

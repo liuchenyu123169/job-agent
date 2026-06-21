@@ -1,18 +1,22 @@
-"""FastAPI 中间件 — 请求 ID 注入、请求耗时记录。"""
+"""FastAPI 中间件 — 请求 ID 注入、请求耗时记录。
+
+注意：这里使用纯 ASGI middleware 而非 BaseHTTPMiddleware。
+BaseHTTPMiddleware 会把整个响应体读进内存再返回，这会破坏 StreamingResponse
+（SSE 流式推送完全失效）。详见 Starlette 官方文档的警告。
+"""
 
 import time
 import uuid
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.observability.logger import StructuredLogger
 from app.observability.metrics import metrics
 from app.observability.tracer import set_request_context
 
 
-class RequestIdMiddleware(BaseHTTPMiddleware):
-    """为每个 HTTP 请求生成或继承 request_id，注入 contextvars，记录请求耗时。
+class RequestIdMiddleware:
+    """纯 ASGI middleware — 不触碰响应体，不影响 StreamingResponse。
 
     行为：
     1. 从请求头 X-Request-Id 读取（如果前端传了）；否则生成一个新的
@@ -21,23 +25,52 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     4. 请求结束时记录 JSON 格式日志
     """
 
-    async def dispatch(self, request: Request, call_next):
-        request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())[:8]
-        trace_id = request.headers.get("X-Trace-Id") or str(uuid.uuid4())[:8]
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id: str = ""
+        trace_id: str = ""
+        for header_name, header_value in scope.get("headers", []):
+            if header_name == b"x-request-id":
+                request_id = header_value.decode()
+            elif header_name == b"x-trace-id":
+                trace_id = header_value.decode()
+
+        if not request_id:
+            request_id = str(uuid.uuid4())[:8]
+        if not trace_id:
+            trace_id = str(uuid.uuid4())[:8]
+
         set_request_context(request_id=request_id, trace_id=trace_id)
 
         t0 = time.monotonic()
-        response = await call_next(request)
-        duration_ms = round((time.monotonic() - t0) * 1000, 2)
+        status_code: int = 0
 
-        response.headers["X-Request-Id"] = request_id
-        response.headers["X-Trace-Id"] = trace_id
+        async def _send(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 0)
+                headers: list[tuple[bytes, bytes]] = list(
+                    message.get("headers", [])
+                )
+                headers.append((b"x-request-id", request_id.encode()))
+                headers.append((b"x-trace-id", trace_id.encode()))
+                message["headers"] = headers
+            await send(message)
 
-        metrics.record_http(response.status_code)
-        StructuredLogger.log_request(
-            method=request.method,
-            path=request.url.path,
-            status=response.status_code,
-            duration_ms=duration_ms,
-        )
-        return response
+        try:
+            await self.app(scope, receive, _send)
+        finally:
+            duration_ms = round((time.monotonic() - t0) * 1000, 2)
+            metrics.record_http(status_code)
+            StructuredLogger.log_request(
+                method=scope.get("method", ""),
+                path=scope.get("path", ""),
+                status=status_code,
+                duration_ms=duration_ms,
+            )
