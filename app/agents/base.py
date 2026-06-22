@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from langgraph.graph import StateGraph
 
-from app.agent.state import AgentAnalyzeState, make_initial_state
+from app.workflows.state import AgentAnalyzeState, make_initial_state
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ class SubAgent(ABC):
         """
         logger.info("[%s] 开始异步流式执行: goal=%s", self.name, goal)
 
-        from app.agent.common import _step_callback, _token_callback
+        from app.workflows.common import _step_callback, _token_callback
 
         step_token = _step_callback.set(on_step) if on_step else None
         token_token = _token_callback.set(on_token) if on_token else None

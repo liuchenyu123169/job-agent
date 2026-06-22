@@ -6,19 +6,19 @@ import {
 } from "./api";
 import { getErrorMessage } from "./components/utils.js";
 import AuthForm from "./components/AuthForm.vue";
-import ChatPanel from "./components/ChatPanel.vue";
-import ResumePanel from "./components/ResumePanel.vue";
-import JobPanel from "./components/JobPanel.vue";
-import RecommendPanel from "./components/RecommendPanel.vue";
-import TaskPanel from "./components/TaskPanel.vue";
-import AdminDashboard from "./components/AdminDashboard.vue";
-import AdminJobs from "./components/AdminJobs.vue";
-import AdminResumes from "./components/AdminResumes.vue";
-import AdminSessions from "./components/AdminSessions.vue";
-import AdminTasks from "./components/AdminTasks.vue";
-import AdminTraces from "./components/AdminTraces.vue";
-import AdminUsers from "./components/AdminUsers.vue";
-import KnowledgePanel from "./components/KnowledgePanel.vue";
+import ChatPage from "./pages/ChatPage.vue";
+import ResumePage from "./pages/ResumePage.vue";
+import JobPage from "./pages/JobPage.vue";
+import RecommendPage from "./pages/RecommendPage.vue";
+import TaskPage from "./pages/TaskPage.vue";
+import KnowledgePage from "./pages/KnowledgePage.vue";
+import AdminDashboardPage from "./pages/admin/AdminDashboardPage.vue";
+import AdminJobsPage from "./pages/admin/AdminJobsPage.vue";
+import AdminResumesPage from "./pages/admin/AdminResumesPage.vue";
+import AdminSessionsPage from "./pages/admin/AdminSessionsPage.vue";
+import AdminTasksPage from "./pages/admin/AdminTasksPage.vue";
+import AdminTracesPage from "./pages/admin/AdminTracesPage.vue";
+import AdminUsersPage from "./pages/admin/AdminUsersPage.vue";
 
 /* ── 侧边栏 ── */
 const baseSidebarItems = [
@@ -368,19 +368,19 @@ onUnmounted(() => setUnauthorizedHandler(null));
         <!-- ── 主视图（根据侧边栏选中项切换内容） ── -->
         <div class="main-shell">
 
-          <ChatPanel ref="chatRef" v-if="activeView === 'chat'" />
-          <ResumePanel ref="resumeRef" v-if="activeView === 'resume'" />
-          <JobPanel ref="jobRef" v-if="activeView === 'job'" />
-          <RecommendPanel v-if="activeView === 'recommend'" />
-          <TaskPanel ref="taskRef" v-if="activeView === 'task'" />
-          <AdminDashboard v-if="activeView === 'admin_dashboard'" />
-          <AdminUsers v-if="activeView === 'admin_users'" />
-          <AdminResumes v-if="activeView === 'admin_resumes'" />
-          <AdminJobs v-if="activeView === 'admin_jobs'" />
-          <AdminTasks v-if="activeView === 'admin_tasks'" />
-          <AdminSessions v-if="activeView === 'admin_sessions'" />
-          <AdminTraces v-if="activeView === 'admin_traces'" />
-          <KnowledgePanel v-if="activeView === 'knowledge'" />
+          <ChatPage ref="chatRef" v-if="activeView === 'chat'" />
+          <ResumePage ref="resumeRef" v-if="activeView === 'resume'" />
+          <JobPage ref="jobRef" v-if="activeView === 'job'" />
+          <RecommendPage v-if="activeView === 'recommend'" />
+          <TaskPage ref="taskRef" v-if="activeView === 'task'" />
+          <AdminDashboardPage v-if="activeView === 'admin_dashboard'" />
+          <AdminUsersPage v-if="activeView === 'admin_users'" />
+          <AdminResumesPage v-if="activeView === 'admin_resumes'" />
+          <AdminJobsPage v-if="activeView === 'admin_jobs'" />
+          <AdminTasksPage v-if="activeView === 'admin_tasks'" />
+          <AdminSessionsPage v-if="activeView === 'admin_sessions'" />
+          <AdminTracesPage v-if="activeView === 'admin_traces'" />
+          <KnowledgePage v-if="activeView === 'knowledge'" />
           <div v-if="activeView === 'evaluation'" class="eval-panel-inline section-top" style="padding:24px;max-width:600px;margin:0 auto;">
             <h4>自动化评测</h4>
             <p>选择 workflow 并运行评测，结果保存到 evaluation_results/ 目录。</p>

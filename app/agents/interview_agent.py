@@ -13,7 +13,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.state import AgentAnalyzeState
+from app.workflows.state import AgentAnalyzeState
 from app.agents.base import SubAgent
 from app.tools import tool_registry
 

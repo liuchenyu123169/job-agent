@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from app.agent.recommend import recommend_jobs_for_resume
+from app.domains.job.matcher import recommend_jobs_for_resume
 from app.tools.base import ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 

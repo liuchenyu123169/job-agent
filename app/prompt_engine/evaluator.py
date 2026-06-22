@@ -12,6 +12,7 @@
     print(report)
 """
 
+import json
 import logging
 import re
 import time
@@ -22,6 +23,7 @@ from typing import Any, Callable
 import yaml
 
 from app.core.llm import invoke_llm
+from app.utils.text_utils import parse_llm_json_output
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +113,6 @@ class PromptEvaluator:
             prompt = self.pm.render(template_name, scene=scene, **case.get("variables", {}))
             raw = invoke_llm(prompt)
             # 延迟导入避免循环依赖 (common → prompt_engine, evaluator → common)
-            from app.agent.common import parse_llm_json_output
             output = parse_llm_json_output(raw)
             result.output = output
         except Exception as exc:

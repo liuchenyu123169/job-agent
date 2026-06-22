@@ -14,8 +14,11 @@ from typing import Any
 
 import yaml
 
-from app.agent.state import make_initial_state
-from app.agent.workflow import analyze_graph, interview_graph, optimize_resume_graph, generate_resume_graph
+from app.workflows.analyze import analyze_graph
+from app.workflows.generate import generate_resume_graph
+from app.workflows.interview import interview_graph
+from app.workflows.optimize import optimize_resume_graph
+from app.workflows.state import make_initial_state
 from app.db.crud import insert_job, insert_resume
 from app.db.database import get_conn
 from app.evaluation.judge import CaseScore, StableJudgeResult, score_case

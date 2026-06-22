@@ -2,8 +2,8 @@
 
 import logging
 
-from app.agent.workflow import analyze_graph
-from app.agent.state import make_initial_state
+from app.workflows.analyze import analyze_graph
+from app.workflows.state import make_initial_state
 from app.tools.base import ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
