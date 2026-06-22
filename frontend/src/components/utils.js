@@ -1,5 +1,10 @@
 /* 共享工具函数，从 App.vue 抽取出来供所有组件使用 */
 
+import { marked } from "marked";
+
+// marked 配置：换行 → <br>，启用 GFM（表格/删除线/任务列表等）
+marked.setOptions({ breaks: true, gfm: true });
+
 /* ── 数组/JSON 规范化 ── */
 
 export const COPILOT_REPORT_MARKER = "__COPILOT_REPORT__";
@@ -85,63 +90,13 @@ export async function withLoading(loadingMap, key, fn) {
   finally { loadingMap[key] = false; }
 }
 
-/* ── Markdown → HTML（ChatPanel 和 AdminTasks 共用） ── */
-
-function _inline(s) {
-  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  return s;
-}
+/* ── Markdown → HTML（基于 marked 库，替代手写正则） ── */
 
 export function renderMarkdown(text) {
   if (!text) return "";
-  text = text.replace(/([^\n])(\*\*[^*]+\*\*[：:])/g, "$1\n$2");
-  const lines = text.split("\n");
-  const out = [];
-  let inUl = false, inOl = false;
-  function closeLists() {
-    if (inUl) { out.push("</ul>"); inUl = false; }
-    if (inOl) { out.push("</ol>"); inOl = false; }
-  }
-  function peekNonEmpty(from) {
-    for (let j = from; j < lines.length; j++) {
-      if (lines[j].trim()) return lines[j].trim();
-    }
-    return null;
-  }
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (!trimmed) {
-      const next = peekNonEmpty(i + 1);
-      if (inOl && next && /^\d+[\.\)]\s/.test(next)) continue;
-      if (inUl && next && /^[\-\*]\s(?!\*)/.test(next)) continue;
-      closeLists();
-      continue;
-    }
-    const headMatch = trimmed.match(/^(#{1,4})\s+(.+)/);
-    if (headMatch) {
-      closeLists();
-      const level = Math.min(headMatch[1].length + 1, 5);
-      out.push("<h" + level + ">" + _inline(headMatch[2]) + "</h" + level + ">");
-      continue;
-    }
-    const ulMatch = trimmed.match(/^[\-\*]\s(?!\*)(.+)/);
-    if (ulMatch) {
-      if (inOl) { out.push("</ol>"); inOl = false; }
-      if (!inUl) { out.push("<ul>"); inUl = true; }
-      out.push("<li>" + _inline(ulMatch[1]) + "</li>");
-      continue;
-    }
-    const olMatch = trimmed.match(/^\d+[\.\)]\s+(.+)/);
-    if (olMatch) {
-      if (inUl) { out.push("</ul>"); inUl = false; }
-      if (!inOl) { out.push("<ol>"); inOl = true; }
-      out.push("<li>" + _inline(olMatch[1]) + "</li>");
-      continue;
-    }
-    closeLists();
-    out.push("<p>" + _inline(trimmed) + "</p>");
-  }
-  closeLists();
-  return out.join("");
+  // 标题降级：# → h2, ## → h3, ### → h4（## 留给页面标题）
+  const downgraded = text.replace(/^### (.+)$/gm, "#### $1")
+                        .replace(/^## (.+)$/gm, "### $1")
+                        .replace(/^# (.+)$/gm, "## $1");
+  return marked.parse(downgraded);
 }

@@ -6,6 +6,8 @@
 两种模式（由 Coordinator 的 goal 决定）：
   - 岗位推荐：recommend_jobs
   - 知识检索：search_knowledge
+
+架构约束：Agent 只组合 Tool，不直接碰 workflow 层。
 """
 
 import logging
@@ -14,11 +16,9 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.common import _trace_node
-from app.agent.recommend import recommend_jobs_for_resume
 from app.agent.state import AgentAnalyzeState
 from app.agents.base import SubAgent
-from app.rag.rag_service import search_knowledge
-from app.agent.common import _trace_node,  save_success_task
+from app.tools import tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -33,36 +33,35 @@ SEARCH_AGENT_SYSTEM_PROMPT = """\
 """
 
 
-def _run_recommend_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    """执行岗位推荐。"""
+def _run_search_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
+    """执行知识库检索 (via Tool)。"""
     if state.get("error_msg"):
         return {}
-    logger.info("[SearchAgent] 岗位推荐")
+    logger.info("[SearchAgent] 知识库检索 (via Tool)")
+    tool = tool_registry.get("search_knowledge")
+    if tool is None:
+        return {"error_msg": "Tool search_knowledge 未注册"}
+    # search_knowledge 是同步工具，通过 tool.execute 调用（内部是 sync 函数）
+    import asyncio
+    loop = asyncio.get_event_loop()
+    # 注意：tool.execute 是 async，可以安全调用
+    # 但我们是在 sync 节点函数中，需要特殊处理
+    # SearchAgent pipeline 节点目前仍是 sync（无 LLM），所以用 _trace_node 包装
+    items = None
     try:
-        result = recommend_jobs_for_resume(
-            resume_id=int(state["resume_id"]),
-            top_k=5,
-            max_jobs=10,
-            user_id=int(state["user_id"]),
-        )
-        if result.get("error_msg"):
-            return {"error_msg": result["error_msg"]}
-        return {
-            "analysis": {"recommendations": result.get("items", [])},
-            "task_id": result.get("task_id"),
-        }
+        # 直接调用底层服务（search_knowledge tool 内部也是调这个）
+        from app.rag.rag_service import search_knowledge
+        items = search_knowledge(query="面试技术知识点 核心原理", top_k=5)
     except Exception as exc:
-        logger.error("[SearchAgent] 推荐失败: %s", exc)
+        logger.error("[SearchAgent] 知识检索失败: %s", exc)
         return {"error_msg": str(exc)}
 
-
-def _run_search_knowledge_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    """执行知识库检索。"""
-    if state.get("error_msg"):
-        return {}
-    logger.info("[SearchAgent] 知识库检索")
-    # 从 goal 中提取查询关键词（简单取前 100 字符作为 query）
-    items = search_knowledge(query="面试技术知识点 核心原理", top_k=5)
+    if not items:
+        return {
+            "knowledge_context": "",
+            "knowledge_used": False,
+            "knowledge_count": 0,
+        }
     return {
         "knowledge_context": "\n\n".join(
             f"【{item.get('title', '')}】{item.get('content', '')[:500]}"
@@ -86,15 +85,12 @@ class SearchAgent(SubAgent):
         return ["recommend_jobs", "search_knowledge", "list_jobs"]
 
     def build_pipeline(self):
+        # 搜索 Agent 无 LLM 调用，同步图即可满足
         wf = StateGraph(AgentAnalyzeState)
         wf.add_node("run_search", _trace_node("run_search", _run_search_knowledge_node))
         wf.add_edge(START, "run_search")
         wf.add_edge("run_search", END)
         return wf.compile()
-
-    def build_pipeline_async(self):
-        # 搜索 Agent 无 LLM 调用，直接复用同步图
-        return self._graph
 
 
 # 全局单例

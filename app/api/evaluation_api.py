@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_admin_user
 from app.evaluation.runner import (
-    _WORKFLOW_MAP,
+    _WF_GRAPH_MAP,
     report_to_dict,
     report_to_markdown,
     run_evaluation,
@@ -33,7 +33,7 @@ class EvalRunRequest(BaseModel):
 
 
 @router.post("/run")
-def run_eval(
+async def run_eval(
     payload: EvalRunRequest,
     _admin: dict = Depends(get_admin_user),
 ) -> dict:
@@ -51,13 +51,13 @@ def run_eval(
     workflows = payload.workflows if isinstance(payload.workflows, list) else [payload.workflows]
 
     for wf in workflows:
-        if wf not in _WORKFLOW_MAP:
-            all_reports[wf] = {"error": f"未知 workflow: {wf}", "available": list(_WORKFLOW_MAP.keys())}
+        if wf not in _WF_GRAPH_MAP:
+            all_reports[wf] = {"error": f"未知 workflow: {wf}", "available": list(_WF_GRAPH_MAP.keys())}
             continue
 
         logger.info("[Eval] running %s (llm_judge=%s, samples=%d, user=%d)",
                      wf, payload.llm_judge, payload.judge_samples, user_id)
-        report = run_evaluation(
+        report = await run_evaluation(
             workflow=wf,
             llm_judge=payload.llm_judge,
             judge_samples=payload.judge_samples,
@@ -88,7 +88,7 @@ def run_eval(
 @router.get("/workflows")
 def list_workflows() -> list[str]:
     """列出所有可评测的 workflow。"""
-    return list(_WORKFLOW_MAP.keys())
+    return list(_WF_GRAPH_MAP.keys())
 
 
 @router.get("/results")

@@ -5,9 +5,8 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.common import _trace_node,  analyze_resume_job, get_prompt_manager, parse_llm_json_output, save_success_task, analyze_resume_job_async
+from app.agent.common import _trace_node, get_prompt_manager, parse_llm_json_output, save_success_task, analyze_resume_job_async
 from app.agent.state import AgentAnalyzeState, make_initial_state
-from app.core.llm import invoke_llm
 from app.db.crud import get_job_by_id, get_resume_by_id
 from app.db.crud import insert_task_traces
 from app.rag.rag_service import search_knowledge
@@ -267,17 +266,6 @@ def build_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
     return {"prompt": prompt}
 
 
-def llm_analyze_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    if state.get("error_msg"):
-        return {}
-
-    analysis = analyze_resume_job(
-        resume_content=state["resume"]["content"],
-        job_jd=state["job"]["jd_text"],
-    )
-    return {"analysis": analysis}
-
-
 async def llm_analyze_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
     """流式调用 LLM，推送 token 到回调，返回完整文本。"""
     if state.get("error_msg"):
@@ -331,13 +319,6 @@ def build_optimize_prompt_node(state: AgentAnalyzeState) -> dict[str, Any]:
     return {"prompt": prompt}
 
 
-def llm_optimize_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    if state.get("error_msg"):
-        return {}
-
-    raw_output = invoke_llm(state["prompt"])
-    return {"raw_output": raw_output}
-
 async def llm_optimize_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
         return {}
@@ -386,12 +367,6 @@ def build_interview_questions_prompt_node(state: AgentAnalyzeState) -> dict[str,
     )
     return {"prompt": prompt}
 
-
-def llm_generate_questions_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    if state.get("error_msg"):
-        return {}
-    raw_output = invoke_llm(state["prompt"])
-    return {"raw_output": raw_output}
 
 async def llm_generate_questions_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
@@ -459,78 +434,6 @@ def _route_after_job_for_interview(state: AgentAnalyzeState) -> str:
     return "retrieve_knowledge"
 
 
-workflow = StateGraph(AgentAnalyzeState)
-workflow.add_node("load_resume", _trace_node("load_resume", load_resume_node))
-workflow.add_node("load_job", _trace_node("load_job", load_job_node))
-workflow.add_node("build_prompt", _trace_node("build_prompt", build_prompt_node))
-workflow.add_node("llm_analyze", _trace_node("llm_analyze", llm_analyze_node))
-workflow.add_node("parse_result", _trace_node("parse_result", parse_result_node))
-workflow.add_node("save_task", _trace_node("save_task", save_task_node))
-workflow.add_edge(START, "load_resume")
-workflow.add_conditional_edges("load_resume", _route_on_error, ["load_job", END])
-workflow.add_conditional_edges("load_job", _route_after_job, ["build_prompt", END])
-workflow.add_edge("build_prompt", "llm_analyze")
-workflow.add_edge("llm_analyze", "parse_result")
-workflow.add_edge("parse_result", "save_task")
-workflow.add_edge("save_task", END)
-
-analyze_graph = workflow.compile()
-
-optimize_workflow = StateGraph(AgentAnalyzeState)
-optimize_workflow.add_node("load_resume", _trace_node("load_resume", load_resume_node))
-optimize_workflow.add_node("load_job", _trace_node("load_job", load_job_node))
-optimize_workflow.add_node("build_optimize_prompt", _trace_node("build_optimize_prompt", build_optimize_prompt_node))
-optimize_workflow.add_node("llm_optimize", _trace_node("llm_optimize", llm_optimize_node))
-optimize_workflow.add_node("parse_optimization", _trace_node("parse_optimization", parse_optimization_node))
-optimize_workflow.add_node("save_optimize_task", _trace_node("save_optimize_task", save_optimize_task_node))
-optimize_workflow.add_edge(START, "load_resume")
-optimize_workflow.add_conditional_edges("load_resume", _route_on_error, ["load_job", END])
-optimize_workflow.add_conditional_edges("load_job", _route_after_job_for_optimize, ["build_optimize_prompt", END])
-optimize_workflow.add_edge("build_optimize_prompt", "llm_optimize")
-optimize_workflow.add_edge("llm_optimize", "parse_optimization")
-optimize_workflow.add_edge("parse_optimization", "save_optimize_task")
-optimize_workflow.add_edge("save_optimize_task", END)
-
-optimize_resume_graph = optimize_workflow.compile()
-
-interview_workflow = StateGraph(AgentAnalyzeState)
-interview_workflow.add_node("load_resume", _trace_node("load_resume", load_resume_node))
-interview_workflow.add_node("load_job", _trace_node("load_job", load_job_node))
-interview_workflow.add_node("retrieve_knowledge", _trace_node("retrieve_knowledge", retrieve_knowledge_node))
-interview_workflow.add_node("build_interview_questions_prompt", _trace_node("build_interview_questions_prompt", build_interview_questions_prompt_node))
-interview_workflow.add_node("llm_interview", _trace_node("llm_interview", llm_generate_questions_node))
-interview_workflow.add_node("parse_questions", _trace_node("parse_questions", parse_questions_node))
-interview_workflow.add_node("save_questions_task", _trace_node("save_questions_task", save_questions_task_node))
-interview_workflow.add_edge(START, "load_resume")
-interview_workflow.add_conditional_edges("load_resume", _route_on_error, ["load_job", END])
-interview_workflow.add_conditional_edges("load_job", _route_after_job_for_interview, ["retrieve_knowledge", END])
-interview_workflow.add_edge("retrieve_knowledge", "build_interview_questions_prompt")
-interview_workflow.add_edge("build_interview_questions_prompt", "llm_interview")
-interview_workflow.add_edge("llm_interview", "parse_questions")
-interview_workflow.add_edge("parse_questions", "save_questions_task")
-interview_workflow.add_edge("save_questions_task", END)
-
-interview_graph = interview_workflow.compile()
-
-
-def run_analyze_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str, Any]:
-    initial_state = make_initial_state(user_id, resume_id, job_id)
-    final_state = analyze_graph.invoke(initial_state)
-    return {
-        "task_id": final_state.get("task_id"),
-        "analysis_text": final_state.get("analysis_text", ""),
-        "error_msg": final_state.get("error_msg"),
-    }
-
-
-def run_optimize_resume_workflow(resume_id: int, job_id: int, user_id: int) -> dict[str, Any]:
-    initial_state = make_initial_state(user_id, resume_id, job_id)
-    final_state = optimize_resume_graph.invoke(initial_state)
-    return {
-        "task_id": final_state.get("task_id"),
-        "optimization_text": final_state.get("optimization_text", ""),
-        "error_msg": final_state.get("error_msg"),
-    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -572,14 +475,6 @@ def build_generate_resume_prompt_node(state: AgentAnalyzeState) -> dict[str, Any
     )
     return {"prompt": prompt}
 
-
-def llm_generate_resume_node(state: AgentAnalyzeState) -> dict[str, Any]:
-    """调用 LLM 生成完整简历。"""
-    if state.get("error_msg"):
-        return {}
-
-    raw_output = invoke_llm(state["prompt"])
-    return {"raw_output": raw_output}
 
 async def llm_generate_resume_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
     """调用 LLM 生成完整简历。"""
@@ -647,69 +542,12 @@ def _route_after_job_for_generate(state: AgentAnalyzeState) -> str:
     return "build_generate_resume_prompt"
 
 
-generate_resume_workflow = StateGraph(AgentAnalyzeState)
-generate_resume_workflow.add_node("load_or_prepare_resume", _trace_node("load_or_prepare_resume", load_or_prepare_resume_node))
-generate_resume_workflow.add_node("load_job", _trace_node("load_job", load_job_node))
-generate_resume_workflow.add_node("build_generate_resume_prompt", _trace_node("build_generate_resume_prompt", build_generate_resume_prompt_node))
-generate_resume_workflow.add_node("llm_generate_resume", _trace_node("llm_generate_resume", llm_generate_resume_node))
-generate_resume_workflow.add_node("parse_generated_resume", _trace_node("parse_generated_resume", parse_generated_resume_node))
-generate_resume_workflow.add_node("save_generate_resume_task", _trace_node("save_generate_resume_task", save_generate_resume_task_node))
-generate_resume_workflow.add_edge(START, "load_or_prepare_resume")
-generate_resume_workflow.add_conditional_edges("load_or_prepare_resume", _route_after_resume_load, ["load_job", END])
-generate_resume_workflow.add_conditional_edges("load_job", _route_after_job_for_generate, ["build_generate_resume_prompt", END])
-generate_resume_workflow.add_edge("build_generate_resume_prompt", "llm_generate_resume")
-generate_resume_workflow.add_edge("llm_generate_resume", "parse_generated_resume")
-generate_resume_workflow.add_edge("parse_generated_resume", "save_generate_resume_task")
-generate_resume_workflow.add_edge("save_generate_resume_task", END)
-
-generate_resume_graph = generate_resume_workflow.compile()
-
-
-def run_generate_resume_workflow(
-    resume_id: int = 0,
-    job_id: int = 0,
-    user_id: int = 0,
-    personal_info: str = "",
-) -> dict[str, Any]:
-    """运行简历生成工作流。
-
-    Args:
-        resume_id: 已有简历 ID（> 0 时从 DB 加载，否则使用 personal_info）
-        job_id: 目标岗位 ID
-        user_id: 用户 ID
-        personal_info: 用户自由文本输入的个人信息（resume_id=0 时必填）
-
-    Returns:
-        {"task_id": int, "generated_resume": str, "error_msg": str | None}
-    """
-    initial_state = make_initial_state(user_id, resume_id, job_id, personal_info=personal_info)
-    final_state = generate_resume_graph.invoke(initial_state)
-    return {
-        "task_id": final_state.get("task_id"),
-        "generated_resume": final_state.get("generated_resume"),
-        "error_msg": final_state.get("error_msg"),
-    }
-
-
-def run_interview_questions_workflow(
-    resume_id: int,
-    job_id: int,
-    user_id: int,
-    enable_rag: bool = True,
-) -> dict[str, Any]:
-    initial_state = make_initial_state(user_id, resume_id, job_id, enable_rag=enable_rag)
-    final_state = interview_graph.invoke(initial_state)
-    return {
-        "task_id": final_state.get("task_id"),
-        "questions_text": final_state.get("questions_text", ""),
-        "error_msg": final_state.get("error_msg"),
-    }
 
 # ═══════════════════════════════════════════════════════════════
-# 异步图（Token 级流式用）
+# Workflow 图（全部异步，通过 astream/ainvoke 执行）
 # ═══════════════════════════════════════════════════════════════
 
-# ── analyze 异步图 ──
+# ── analyze 图 ──
 _analyze_async = StateGraph(AgentAnalyzeState)
 _analyze_async.add_node("load_resume", _trace_node("load_resume", load_resume_node))
 _analyze_async.add_node("load_job", _trace_node("load_job", load_job_node))
@@ -724,9 +562,9 @@ _analyze_async.add_edge("build_prompt", "llm_analyze")
 _analyze_async.add_edge("llm_analyze", "parse_result")
 _analyze_async.add_edge("parse_result", "save_task")
 _analyze_async.add_edge("save_task", END)
-analyze_graph_async = _analyze_async.compile()
+analyze_graph = _analyze_async.compile()
 
-# ── optimize 异步图 ──
+# ── optimize 图 ──
 _optimize_async = StateGraph(AgentAnalyzeState)
 _optimize_async.add_node("load_resume", _trace_node("load_resume", load_resume_node))
 _optimize_async.add_node("load_job", _trace_node("load_job", load_job_node))
@@ -741,9 +579,9 @@ _optimize_async.add_edge("build_optimize_prompt", "llm_optimize")
 _optimize_async.add_edge("llm_optimize", "parse_optimization")
 _optimize_async.add_edge("parse_optimization", "save_optimize_task")
 _optimize_async.add_edge("save_optimize_task", END)
-optimize_resume_graph_async = _optimize_async.compile()
+optimize_resume_graph = _optimize_async.compile()
 
-# ── interview 异步图 ──
+# ── interview 图 ──
 _interview_async = StateGraph(AgentAnalyzeState)
 _interview_async.add_node("load_resume", _trace_node("load_resume", load_resume_node))
 _interview_async.add_node("load_job", _trace_node("load_job", load_job_node))
@@ -760,9 +598,9 @@ _interview_async.add_edge("build_interview_questions_prompt", "llm_interview")
 _interview_async.add_edge("llm_interview", "parse_questions")
 _interview_async.add_edge("parse_questions", "save_questions_task")
 _interview_async.add_edge("save_questions_task", END)
-interview_graph_async = _interview_async.compile()
+interview_graph = _interview_async.compile()
 
-# ── generate_resume 异步图 ──
+# ── generate_resume 图 ──
 _generate_async = StateGraph(AgentAnalyzeState)
 _generate_async.add_node("load_or_prepare_resume", _trace_node("load_or_prepare_resume", load_or_prepare_resume_node))
 _generate_async.add_node("load_job", _trace_node("load_job", load_job_node))
@@ -777,4 +615,4 @@ _generate_async.add_edge("build_generate_resume_prompt", "llm_generate_resume")
 _generate_async.add_edge("llm_generate_resume", "parse_generated_resume")
 _generate_async.add_edge("parse_generated_resume", "save_generate_resume_task")
 _generate_async.add_edge("save_generate_resume_task", END)
-generate_resume_graph_async = _generate_async.compile()
+generate_resume_graph = _generate_async.compile()

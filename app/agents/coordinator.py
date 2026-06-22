@@ -2,7 +2,7 @@
 
 核心设计：
   - Coordinator 本身是一个 ReAct agent（复用 app/copilot/graph.py 的图结构）
-  - 其 "工具" 是子 Agent（SubAgent 实例），每个子 Agent 包装为 ToolDefinition
+  - 其 "工具" 是子 Agent（SubAgent 实例），通过 agent_registry 管理
   - System prompt 告诉 LLM：你是协调者，把任务委派给专业子 Agent
 
 与单 Agent 的区别：
@@ -15,19 +15,17 @@
   - Agent 间通信格式？→ 结构化 dict（success/data/error），不传原始 LLM 文本
 """
 
-import asyncio
 import json
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.base import SubAgent
+from app.agents.registry import agent_registry
 from app.copilot.state import PipelineState
 from app.core.llm import invoke_llm_with_tools
-from app.tools.base import ToolDefinition, ToolResult
-from app.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -69,74 +67,56 @@ COORDINATOR_SYSTEM_PROMPT = """\
 5. **如果用户表达了多个意图，必须委派所有相关的子 Agent，不要只做一个**
 """
 
+
 # ═══════════════════════════════════════════════════════════════
-# 子 Agent → ToolDefinition 包装
+# 子 Agent → OpenAI function-calling 格式生成
 # ═══════════════════════════════════════════════════════════════
 
-def _wrap_sub_agent_tool(agent: SubAgent) -> ToolDefinition:
-    """将 SubAgent 包装为 ToolDefinition，Coordinator 的 ReAct 循环可调用。
+def _agent_to_function_def(agent: SubAgent) -> dict:
+    """将 SubAgent 转为 OpenAI function-calling 格式的工具定义。
 
-    关键：execute 函数内部的逻辑是调用 agent.run()，然后返回 ToolResult。
-    Coordinator 不需要知道子 Agent 内部有几个步骤、调了哪些 LLM——
-    它只看到"调用了一个工具，拿到了结果"。
+    不再创建 ToolDefinition 对象，也不注册到 tool_registry。
+    Coordinator 内部直接使用此格式。
     """
-
-    async def _execute(
-        resume_id: int = 0,
-        job_id: int = 0,
-        user_id: int = 0,
-        **kwargs,
-    ) -> ToolResult:
-        goal = kwargs.pop("goal", f"执行 {agent.name} 的默认任务")
-        result = await asyncio.to_thread(
-            agent.run,
-            goal=str(goal),
-            resume_id=int(resume_id),
-            job_id=int(job_id),
-            user_id=int(user_id),
-        )
-        if result["success"]:
-            return ToolResult.ok(result["data"] or {})
-        return ToolResult.fail(result.get("error") or "unknown error")
-
-    return ToolDefinition(
-        name=agent.name,
-        description=agent.description,
-        parameters={
-            "type": "object",
-            "properties": {
-                "resume_id": {"type": "integer", "description": "简历 ID"},
-                "job_id": {"type": "integer", "description": "岗位 ID"},
-                "goal": {"type": "string", "description": "子任务描述，告诉子 Agent 要做什么"},
+    return {
+        "type": "function",
+        "function": {
+            "name": agent.name,
+            "description": agent.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resume_id": {"type": "integer", "description": "简历 ID"},
+                    "job_id": {"type": "integer", "description": "岗位 ID"},
+                    "goal": {"type": "string", "description": "子任务描述，告诉子 Agent 要做什么"},
+                },
+                "required": ["resume_id", "job_id"],
             },
-            "required": ["resume_id", "job_id"],
         },
-        execute=_execute,
-        keywords=[],
-        render_type="generic",
-    )
+    }
+
+
+def _get_agent_function_defs() -> list[dict]:
+    """从 agent_registry 生成所有已注册 Agent 的 function-calling 定义。"""
+    return [_agent_to_function_def(a) for a in agent_registry.list_all()]
 
 
 # ═══════════════════════════════════════════════════════════════
-# Coordinator ReAct Graph（结构与 copilot/graph.py 完全一致）
+# Coordinator ReAct Graph（结构与 copilot/graph.py 一致）
 # ═══════════════════════════════════════════════════════════════
 
 def create_coordinator_graph(sub_agents: list[SubAgent]):
     """构建 Coordinator 的 ReAct 循环图。
 
     Args:
-        sub_agents: 子 Agent 列表，每个都会被注册为 Coordinator 的工具
+        sub_agents: 子 Agent 列表，用于日志输出（实际调度走 agent_registry）
 
     Returns:
         编译后的 LangGraph StateGraph
     """
-    # 将子 Agent 注册到 tool_registry（临时注册，Coordinator 专用）
-    sub_tool_names: set[str] = set()
+    # 确保子 Agent 都在 agent_registry 中注册（幂等）
     for agent in sub_agents:
-        tool = _wrap_sub_agent_tool(agent)
-        tool_registry.register(tool)
-        sub_tool_names.add(tool.name)
-        logger.info("[Coordinator] 注册子 Agent 工具: %s", tool.name)
+        agent_registry.register(agent)
 
     # ── agent_node：LLM 决策 ──
 
@@ -159,7 +139,8 @@ def create_coordinator_graph(sub_agents: list[SubAgent]):
                     prompt += "\n调用子 Agent 时请直接传入这些 ID。"
             messages = [SystemMessage(content=prompt)] + list(messages)
 
-        tool_defs = tool_registry.get_function_definitions()
+        # 从 agent_registry 生成 function definitions（不再污染 tool_registry）
+        tool_defs = _get_agent_function_defs()
         response: AIMessage = invoke_llm_with_tools(messages, tool_defs, model_key="fast")
         return {"messages": messages + [response]}
 
@@ -174,7 +155,7 @@ def create_coordinator_graph(sub_agents: list[SubAgent]):
             return "tools"
         return "__end__"
 
-    # ── tools_node：执行子 Agent 调用 ──
+    # ── tools_node：直接调用子 Agent ──
 
     async def tools_node(state: PipelineState) -> dict[str, Any]:
         messages = state["messages"]
@@ -194,8 +175,8 @@ def create_coordinator_graph(sub_agents: list[SubAgent]):
 
             logger.info("[Coordinator] 委派任务给 %s args=%s", tool_name, tool_args)
 
-            tool = tool_registry.get(tool_name)
-            if tool is None:
+            agent = agent_registry.get(tool_name)
+            if agent is None:
                 result = {"success": False, "error": f"未知子 Agent: {tool_name}"}
             else:
                 try:
@@ -206,11 +187,20 @@ def create_coordinator_graph(sub_agents: list[SubAgent]):
                     if context.job_id:
                         inject_args.setdefault("job_id", context.job_id)
 
-                    tool_result = await tool.execute(**inject_args)
+                    # 直接调 agent.run_stream_async()，不再通过 Tool 包装
+                    agent_result = await agent.run_stream_async(
+                        goal=str(inject_args.pop("goal", f"执行 {tool_name}")),
+                        resume_id=int(inject_args.get("resume_id", 0)),
+                        job_id=int(inject_args.get("job_id", 0)),
+                        user_id=int(inject_args.get("user_id", user_id)),
+                        # Coordinator 路径不需要 SSE token 推送
+                        on_step=None,
+                        on_token=None,
+                    )
                     result = {
-                        "success": tool_result.success,
-                        "data": tool_result.data,
-                        "error": tool_result.error,
+                        "success": agent_result["success"],
+                        "data": agent_result.get("data"),
+                        "error": agent_result.get("error"),
                     }
                 except Exception as exc:
                     logger.error("[Coordinator] 子 Agent 执行异常: %s", exc)

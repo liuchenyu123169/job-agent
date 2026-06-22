@@ -14,12 +14,8 @@ from typing import Any
 
 import yaml
 
-from app.agent.workflow import (
-    run_analyze_workflow,
-    run_interview_questions_workflow,
-    run_optimize_resume_workflow,
-    run_generate_resume_workflow,
-)
+from app.agent.state import make_initial_state
+from app.agent.workflow import analyze_graph, interview_graph, optimize_resume_graph, generate_resume_graph
 from app.db.crud import insert_job, insert_resume
 from app.db.database import get_conn
 from app.evaluation.judge import CaseScore, StableJudgeResult, score_case
@@ -30,11 +26,11 @@ DATASETS_DIR = Path(__file__).resolve().parent / "datasets"
 
 # ── Workflow 映射 ──
 
-_WORKFLOW_MAP: dict[str, Any] = {
-    "match_analyze": run_analyze_workflow,
-    "interview_questions": run_interview_questions_workflow,
-    "resume_optimize": run_optimize_resume_workflow,
-    "resume_generate": run_generate_resume_workflow,
+_WF_GRAPH_MAP: dict[str, Any] = {
+    "match_analyze": analyze_graph,
+    "interview_questions": interview_graph,
+    "resume_optimize": optimize_resume_graph,
+    "resume_generate": generate_resume_graph,
 }
 
 # 每个 workflow 需要的参数（from case input）
@@ -126,7 +122,7 @@ def load_dataset(workflow: str) -> list[dict[str, Any]]:
 # ── 评测编排 ──
 
 
-def run_evaluation(
+async def run_evaluation(
     workflow: str,
     llm_judge: bool = True,
     judge_samples: int = 3,
@@ -150,9 +146,9 @@ def run_evaluation(
                           avg_latency_ms=0, theme_hit_rate=0, forbidden_hit_rate=0,
                           empty_rate=0, judge_reliable_rate=0)
 
-    wf_fn = _WORKFLOW_MAP.get(workflow)
-    if wf_fn is None:
-        raise ValueError(f"未知 workflow: {workflow}，可选: {list(_WORKFLOW_MAP.keys())}")
+    wf_graph = _WF_GRAPH_MAP.get(workflow)
+    if wf_graph is None:
+        raise ValueError(f"未知 workflow: {workflow}，可选: {list(_WF_GRAPH_MAP.keys())}")
 
     results: list[CaseScore] = []
 
@@ -169,14 +165,29 @@ def run_evaluation(
         # 插入临时测试数据（如果用例提供了 inline resume_content/job_jd）
         resume_id, job_id = _setup_temp_data(input_data, user_id=1)
 
-        # 调 workflow
+        # 调 workflow（async graph）
         t0 = time.perf_counter()
         try:
             params = {k: input_data.get(k, 1) for k in _WORKFLOW_PARAMS.get(workflow, [])}
             params.setdefault("user_id", 1)
             params["resume_id"] = resume_id or params.get("resume_id", 1)
             params["job_id"] = job_id or params.get("job_id", 1)
-            output = wf_fn(**params)
+            initial = make_initial_state(
+                user_id=params.get("user_id", 1),
+                resume_id=params["resume_id"],
+                job_id=params["job_id"],
+                enable_rag=params.get("enable_rag", True),
+                personal_info=params.get("personal_info", ""),
+            )
+            final_state = await wf_graph.ainvoke(initial)
+            output = {
+                "task_id": final_state.get("task_id"),
+                "analysis_text": final_state.get("analysis_text", ""),
+                "optimization_text": final_state.get("optimization_text", ""),
+                "questions_text": final_state.get("questions_text", ""),
+                "generated_resume": final_state.get("generated_resume", ""),
+                "error_msg": final_state.get("error_msg"),
+            }
             raw_output = json.dumps(output, ensure_ascii=False)
         except Exception as exc:
             logger.error("[Eval] workflow failed for %s: %s", name, exc)

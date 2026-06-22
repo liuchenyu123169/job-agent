@@ -2,7 +2,8 @@
 
 import logging
 
-from app.agent.workflow import run_optimize_resume_workflow
+from app.agent.workflow import optimize_resume_graph
+from app.agent.state import make_initial_state
 from app.tools.base import ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
@@ -34,16 +35,13 @@ async def optimize_resume_execute(
     """执行简历优化分析。"""
     logger.info("[optimize_resume] resume_id=%s job_id=%s user_id=%s", resume_id, job_id, user_id)
     try:
-        result = run_optimize_resume_workflow(
-            resume_id=int(resume_id),
-            job_id=int(job_id),
-            user_id=int(user_id),
-        )
-        if result.get("error_msg"):
-            return ToolResult.fail(str(result["error_msg"]))
+        initial = make_initial_state(int(user_id), int(resume_id), int(job_id))
+        final_state = await optimize_resume_graph.ainvoke(initial)
+        if final_state.get("error_msg"):
+            return ToolResult.fail(str(final_state["error_msg"]))
         return ToolResult.ok({
-            "task_id": result.get("task_id"),
-            "optimization": result.get("optimization") or {},
+            "task_id": final_state.get("task_id"),
+            "optimization": final_state.get("optimization_text") or {},
         })
     except Exception as exc:
         logger.error("[optimize_resume] failed: %s", exc)

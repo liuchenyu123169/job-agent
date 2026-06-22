@@ -3,8 +3,9 @@
 从 Coordinator 视角看：
   "基于简历和岗位生成四类面试题（技术/项目/行为/风险），支持 RAG 增强"
 
-内部 pipeline：retrieve_knowledge → generate_questions
-两个步骤：先检索知识库做 RAG 增强，再生成最终面试题。
+内部 pipeline：直接调用 generate_interview_questions Tool 完成完整流程。
+
+架构约束：Agent 只组合 Tool，不直接碰 workflow 层。
 """
 
 import logging
@@ -12,18 +13,9 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.common import _trace_node
 from app.agent.state import AgentAnalyzeState
 from app.agents.base import SubAgent
-from app.agent.workflow import (
-    build_interview_questions_prompt_node,
-    load_job_node,
-    load_resume_node,
-    llm_generate_questions_node,
-    parse_questions_node,
-    retrieve_knowledge_node,
-    save_questions_task_node,
-)
+from app.tools import tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -36,28 +28,28 @@ INTERVIEW_AGENT_SYSTEM_PROMPT = """\
 
 请直接按顺序执行，生成具体、可追问的技术面试题，避免泛泛而谈。
 """
-from app.agent.workflow import interview_graph_async
 
-async def _run_interview_node_async(state: AgentAnalyzeState) -> dict[str, Any]:
+
+async def _run_interview_node(state: AgentAnalyzeState) -> dict[str, Any]:
     if state.get("error_msg"):
-      return {}
-    logger.info("[InterviewAgent] 面试题生成 (async)")
-    final_state = await interview_graph_async.ainvoke({
-      "user_id": state["user_id"],
-      "resume_id": state["resume_id"],
-      "job_id": state["job_id"],
-      "enable_rag": state.get("enable_rag", True),
-    })
-    if final_state.get("error_msg"):
-      return {"error_msg": final_state["error_msg"]}
+        return {}
+    logger.info("[InterviewAgent] 面试题生成 (via Tool)")
+    tool = tool_registry.get("generate_interview_questions")
+    if tool is None:
+        return {"error_msg": "Tool generate_interview_questions 未注册"}
+    result = await tool.execute(
+        resume_id=int(state["resume_id"]),
+        job_id=int(state["job_id"]),
+        user_id=int(state["user_id"]),
+        enable_rag=state.get("enable_rag", True),
+    )
+    if not result.success:
+        return {"error_msg": result.error or "generate_interview_questions failed"}
+    data = result.data or {}
     return {
-      "questions_text": final_state.get("questions_text", ""),
-      "task_id": final_state.get("task_id"),
+        "questions_text": str(data.get("questions", "")),
+        "task_id": data.get("task_id"),
     }
-
-
-def _route_after_load(state: AgentAnalyzeState) -> str:
-    return END if state.get("error_msg") else "retrieve_knowledge"
 
 
 class InterviewAgent(SubAgent):
@@ -74,28 +66,7 @@ class InterviewAgent(SubAgent):
 
     def build_pipeline(self):
         wf = StateGraph(AgentAnalyzeState)
-        # 复用现有节点函数
-        wf.add_node("load_resume", _trace_node("load_resume", load_resume_node))
-        wf.add_node("load_job", _trace_node("load_job", load_job_node))
-        wf.add_node("retrieve_knowledge", _trace_node("retrieve_knowledge", retrieve_knowledge_node))
-        wf.add_node("build_prompt", _trace_node("build_prompt", build_interview_questions_prompt_node))
-        wf.add_node("llm_generate", _trace_node("llm_generate", llm_generate_questions_node))
-        wf.add_node("parse_questions", _trace_node("parse_questions", parse_questions_node))
-        wf.add_node("save_task", _trace_node("save_task", save_questions_task_node))
-
-        wf.add_edge(START, "load_resume")
-        wf.add_conditional_edges("load_resume", _route_after_load, {"retrieve_knowledge": "load_job", END: END})
-        wf.add_conditional_edges("load_job", _route_after_load, {"retrieve_knowledge": "retrieve_knowledge", END: END})
-        wf.add_edge("retrieve_knowledge", "build_prompt")
-        wf.add_edge("build_prompt", "llm_generate")
-        wf.add_edge("llm_generate", "parse_questions")
-        wf.add_edge("parse_questions", "save_task")
-        wf.add_edge("save_task", END)
-        return wf.compile()
-
-    def build_pipeline_async(self):
-        wf = StateGraph(AgentAnalyzeState)
-        wf.add_node("run_interview", _run_interview_node_async)
+        wf.add_node("run_interview", _run_interview_node)
         wf.add_edge(START, "run_interview")
         wf.add_edge("run_interview", END)
         return wf.compile()

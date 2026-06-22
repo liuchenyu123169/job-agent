@@ -2,7 +2,8 @@
 
 import logging
 
-from app.agent.workflow import run_interview_questions_workflow
+from app.agent.workflow import interview_graph
+from app.agent.state import make_initial_state
 from app.tools.base import ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
@@ -43,17 +44,13 @@ async def interview_questions_execute(
         resume_id, job_id, enable_rag, user_id,
     )
     try:
-        result = run_interview_questions_workflow(
-            resume_id=int(resume_id),
-            job_id=int(job_id),
-            user_id=int(user_id),
-            enable_rag=bool(enable_rag),
-        )
-        if result.get("error_msg"):
-            return ToolResult.fail(str(result["error_msg"]))
+        initial = make_initial_state(int(user_id), int(resume_id), int(job_id), enable_rag=bool(enable_rag))
+        final_state = await interview_graph.ainvoke(initial)
+        if final_state.get("error_msg"):
+            return ToolResult.fail(str(final_state["error_msg"]))
         return ToolResult.ok({
-            "task_id": result.get("task_id"),
-            "questions": result.get("interview_questions") or {},
+            "task_id": final_state.get("task_id"),
+            "questions": final_state.get("questions_text") or {},
         })
     except Exception as exc:
         logger.error("[generate_interview_questions] failed: %s", exc)

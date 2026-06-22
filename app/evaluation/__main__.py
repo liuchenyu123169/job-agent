@@ -1,7 +1,9 @@
 """CLI 入口: python -m app.evaluation --workflow match_analyze"""
 
-from app.evaluation import run_evaluation, report_to_markdown
 import argparse
+import asyncio
+
+from app.evaluation import run_evaluation, report_to_markdown
 
 parser = argparse.ArgumentParser(description="JobAgent 评测工具")
 parser.add_argument("--workflow", "-w", required=True,
@@ -18,9 +20,15 @@ args = parser.parse_args()
 
 print(f"评测 {args.workflow} (LLM Judge={'ON' if args.llm_judge else 'OFF'}, samples={args.samples})")
 print()
-report = run_evaluation(
-    workflow=args.workflow,
-    llm_judge=args.llm_judge,
-    judge_samples=args.samples,
-)
-print(report_to_markdown(report))
+
+
+async def _main():
+    report = await run_evaluation(
+        workflow=args.workflow,
+        llm_judge=args.llm_judge,
+        judge_samples=args.samples,
+    )
+    print(report_to_markdown(report))
+
+
+asyncio.run(_main())

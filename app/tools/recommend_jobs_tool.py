@@ -1,5 +1,6 @@
 """岗位推荐工具 — 基于简历内容对所有岗位做匹配打分并推荐最佳岗位。"""
 
+import asyncio
 import logging
 
 from app.agent.recommend import recommend_jobs_for_resume
@@ -44,7 +45,8 @@ async def recommend_jobs_execute(
         resume_id, top_k, max_jobs, user_id,
     )
     try:
-        result = recommend_jobs_for_resume(
+        result = await asyncio.to_thread(
+            recommend_jobs_for_resume,
             resume_id=int(resume_id),
             top_k=int(top_k),
             max_jobs=int(max_jobs),

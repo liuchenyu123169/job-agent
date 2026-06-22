@@ -7,7 +7,8 @@
 
 import logging
 
-from app.agent.workflow import run_generate_resume_workflow
+from app.agent.workflow import generate_resume_graph
+from app.agent.state import make_initial_state
 from app.tools.base import ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
@@ -51,17 +52,13 @@ async def generate_resume_execute(
         return ToolResult.fail("请提供简历 ID（resume_id）或输入您的个人信息（personal_info）")
 
     try:
-        result = run_generate_resume_workflow(
-            resume_id=int(resume_id or 0),
-            job_id=int(job_id),
-            user_id=int(user_id),
-            personal_info=str(personal_info or ""),
-        )
-        if result.get("error_msg"):
-            return ToolResult.fail(str(result["error_msg"]))
+        initial = make_initial_state(int(user_id), int(resume_id or 0), int(job_id), personal_info=str(personal_info or ""))
+        final_state = await generate_resume_graph.ainvoke(initial)
+        if final_state.get("error_msg"):
+            return ToolResult.fail(str(final_state["error_msg"]))
         return ToolResult.ok({
-            "task_id": result.get("task_id"),
-            "generated_resume": result.get("generated_resume") or "",
+            "task_id": final_state.get("task_id"),
+            "generated_resume": final_state.get("generated_resume") or "",
         })
     except Exception as exc:
         logger.error("[generate_resume] failed: %s", exc)
