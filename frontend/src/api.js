@@ -134,19 +134,7 @@ export const jobApi = {
 };
 
 export const agentApi = {
-  analyze(payload) {
-    return safePost("/api/agent/analyze", payload, "analyze");
-  },
-  optimizeResume(payload) {
-    return safePost("/api/agent/optimize-resume", payload, "optimizeResume");
-  },
-  generateInterviewQuestions(payload) {
-    return safePost(
-      "/api/agent/generate-interview-questions",
-      payload,
-      "generateInterviewQuestions"
-    );
-  },
+  // 已废弃: analyze/optimizeResume/generateInterviewQuestions → 请使用 POST /api/copilot/run
   recommendJobs(payload) {
     return safePost("/api/agent/recommend-jobs", payload, "recommendJobs");
   }

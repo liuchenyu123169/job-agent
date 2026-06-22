@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, provide, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref } from "vue";
 import {
   adminApi, agentApi, authApi, copilotApi, jobApi, knowledgeApi, resumeApi,
   setUnauthorizedHandler, taskApi
@@ -69,6 +69,7 @@ async function selectSession(sessionId) {
   currentSessionId.value = sessionId;
   storeSessionId(sessionId);
   if (!adminMode.value) activeView.value = "chat";
+  await nextTick();
   if (chatRef.value) {
     await chatRef.value.loadSessionHistory(sessionId);
   }
@@ -76,9 +77,10 @@ async function selectSession(sessionId) {
 async function newChat() {
   currentSessionId.value = null;
   localStorage.removeItem("currentSessionId");
+  if (!adminMode.value) activeView.value = "chat";
+  await nextTick();
   if (chatRef.value) {
-    chatRef.value.messages = [];
-    chatRef.value.welcome(currentUser.value?.username || "");
+    await chatRef.value.resetForNewChat(currentUser.value?.username || "");
   }
 }
 
@@ -204,6 +206,10 @@ async function restoreSession() {
   loadingMap.restore = true;
   try {
     currentUser.value = await authApi.getCurrentUser();
+    // 普通用户强制 adminMode=false，否则侧边栏不显示历史对话列表
+    if (!currentUser.value?.is_admin) {
+      adminMode.value = false;
+    }
     if (!activeView.value) {
       activeView.value = currentUser.value?.is_admin ? "admin_dashboard" : "chat";
     }
