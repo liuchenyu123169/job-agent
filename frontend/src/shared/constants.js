@@ -1,0 +1,1 @@
+export const COPILOT_REPORT_MARKER = "__COPILOT_REPORT__";

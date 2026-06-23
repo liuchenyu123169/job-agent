@@ -1,6 +1,6 @@
 <script setup>
 import { inject, reactive, ref } from "vue";
-import { getErrorMessage } from "./utils.js";
+import { getErrorMessage } from "../shared/error.js";
 
 const api = inject("api");
 const setMessage = inject("setMessage");

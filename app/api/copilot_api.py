@@ -519,17 +519,24 @@ def get_session_messages(
     result: list[dict] = []
     for row in rows:
         db_role = str(row.get("role") or "")
+        # 跳过中间消息：tool 调用、tool 结果、系统提示词
+        if db_role in ("tool", "system"):
+            continue
+        if db_role == "assistant" and row.get("tool_calls_json"):
+            # 这是 LLM 决定调用工具时的中间消息，不是给用户看的最终回复
+            continue
         # 映射 DB role → 前端 role
         frontend_role = {
             "user": "user",
             "assistant": "copilot",
             "ai": "copilot",
-            "tool": "tool",
-            "system": "copilot",
         }.get(db_role, "copilot")
+        content = str(row.get("content") or "")
+        if not content.strip():
+            continue
         result.append({
             "role": frontend_role,
-            "content": str(row.get("content") or ""),
+            "content": content,
             "created_at": str(row.get("created_at") or ""),
             "tool_name": row.get("tool_name"),
         })
