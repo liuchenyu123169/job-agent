@@ -1,6 +1,7 @@
 <script setup>
 import { inject, ref } from "vue";
 
+const api = inject("api");
 const token = inject("token");
 const setMessage = inject("setMessage");
 
@@ -19,26 +20,17 @@ async function runEvaluation() {
   evalRunning.value = true;
   evalResult.value = null;
   try {
-    const resp = await fetch("http://127.0.0.1:8000/api/evaluation/run", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token.value}`,
-      },
-      body: JSON.stringify({
-        workflows: [evalWorkflow.value],
-        llm_judge: evalUseJudge.value,
-        judge_samples: 3,
-      }),
-    });
-
-    const data = await resp.json();
-    evalResult.value = data;
-    if (!resp.ok) {
-      setMessage?.(data?.detail || data?.error || "测评执行失败。", true);
+    if (!token.value) {
+      throw new Error("未登录，无法执行测评");
     }
+    const data = await api.evaluationApi.runEvaluation({
+      workflows: [evalWorkflow.value],
+      llm_judge: evalUseJudge.value,
+      judge_samples: 3,
+    });
+    evalResult.value = data;
   } catch (err) {
-    const errorMessage = String(err);
+    const errorMessage = String(err?.response?.data?.detail || err?.message || err);
     evalResult.value = { error: errorMessage };
     setMessage?.(errorMessage, true);
   } finally {
@@ -66,7 +58,7 @@ async function runEvaluation() {
       <div class="field">
         <span>LLM Judge</span>
         <input v-model="evalUseJudge" type="checkbox" />
-        启用 LLM 质量评分（耗时较长）
+        启用 LLM 质量评分，耗时会更长。
       </div>
       <button class="btn btn-primary" :disabled="evalRunning" @click="runEvaluation">
         {{ evalRunning ? "测评中..." : "运行测评" }}

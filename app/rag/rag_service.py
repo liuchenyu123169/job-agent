@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from app.rag.loader import load_knowledge_files
@@ -32,3 +33,22 @@ def build_knowledge_base() -> dict:
 
 def search_knowledge(query: str, top_k: int = 5) -> list[dict]:
     return get_store().search(query=query, top_k=top_k)
+
+
+async def search_knowledge_cached(
+    query: str,
+    top_k: int = 5,
+    enable_rag: bool = True,
+) -> list[dict]:
+    """带 Redis 缓存的 RAG 检索。缓存 key 包含 query + top_k + enable_rag。"""
+    if not enable_rag:
+        return []
+
+    from app.infra.cache import cache_manager
+
+    key = cache_manager.key("rag", query, str(top_k), str(enable_rag))
+
+    async def _do_search():
+        return await asyncio.to_thread(search_knowledge, query, top_k)
+
+    return await cache_manager.get_or_compute(key, ttl=1800, compute_fn=_do_search)

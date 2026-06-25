@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import time
@@ -61,14 +62,49 @@ def analyze_resume_job(resume_content: str, job_jd: str) -> dict[str, Any]:
     return {"text": raw_output}
 
 
+def analyze_resume_job_scored(resume_content: str, job_jd: str) -> dict[str, Any]:
+    """岗位推荐专用：要求 LLM 输出 JSON，返回结构化评分字段。
+
+    与 analyze_resume_job 不同——后者输出 markdown 给用户看，这个输出 JSON 给程序解析。
+    """
+    from app.utils.text_utils import parse_llm_json_output
+
+    prompt = _prompt_manager.render("match_score", resume_content=resume_content, job_jd=job_jd)
+    raw_output = invoke_llm(prompt, model_key="fast")
+    parsed = parse_llm_json_output(raw_output)
+
+    return {
+        "match_score": normalize_match_score(parsed.get("match_score", 0)),
+        "advantages": ensure_string_list(parsed.get("advantages")),
+        "weaknesses": ensure_string_list(parsed.get("weaknesses")),
+        "suggestions": ensure_string_list(parsed.get("suggestions")),
+        "match_reason": str(parsed.get("match_reason", "")),
+    }
+
+
 async def analyze_resume_job_async(resume_content: str, job_jd: str) -> dict[str, Any]:
-    prompt = _prompt_manager.render(
-        "match_analyze",
-        resume_content=resume_content,
-        job_jd=job_jd,
+    """带 Redis 缓存的 LLM 匹配分析。相同简历+岗位+Prompt版本+模型 → 直接返回。"""
+    from app.infra.cache import cache_manager
+    from app.core.model_provider import model_provider
+
+    prompt_version = _prompt_manager.version
+    model_name = model_provider.get_model_name("primary")
+    resume_hash = hashlib.sha256((resume_content or "").encode()).hexdigest()[:12]
+    job_hash = hashlib.sha256((job_jd or "").encode()).hexdigest()[:12]
+    cache_key = cache_manager.key(
+        "llm", "match_analyze", resume_hash, job_hash, prompt_version, model_name,
     )
-    raw_output = await _stream_llm_with_callback(prompt)
-    return {"text": raw_output}
+
+    async def _do_llm():
+        prompt = _prompt_manager.render(
+            "match_analyze",
+            resume_content=resume_content,
+            job_jd=job_jd,
+        )
+        raw_output = await _stream_llm_with_callback(prompt)
+        return {"text": raw_output}
+
+    return await cache_manager.get_or_compute(cache_key, ttl=1800, compute_fn=_do_llm)
 
 
 def normalize_match_score(value: Any) -> int:

@@ -3,6 +3,7 @@ export {
   agentApi,
   authApi,
   copilotApi,
+  evaluationApi,
   jobApi,
   knowledgeApi,
   resumeApi,

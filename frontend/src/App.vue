@@ -5,6 +5,7 @@ import {
   agentApi,
   authApi,
   copilotApi,
+  evaluationApi,
   jobApi,
   knowledgeApi,
   resumeApi,
@@ -206,7 +207,7 @@ function switchView(key) {
   activeView.value = key;
 }
 
-provide("api", { adminApi, agentApi, authApi, copilotApi, jobApi, knowledgeApi, resumeApi, taskApi });
+provide("api", { adminApi, agentApi, authApi, copilotApi, evaluationApi, jobApi, knowledgeApi, resumeApi, taskApi });
 provide("setMessage", setMessage);
 provide("loadingMap", loadingMap);
 provide("token", token);

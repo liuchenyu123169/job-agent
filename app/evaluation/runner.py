@@ -20,7 +20,7 @@ from app.workflows.interview import interview_graph
 from app.workflows.optimize import optimize_resume_graph
 from app.workflows.state import make_initial_state
 from app.db.crud import insert_job, insert_resume
-from app.db.database import get_conn
+from app.db.database import execute, get_conn
 from app.evaluation.judge import CaseScore, StableJudgeResult, score_case
 
 logger = logging.getLogger(__name__)
@@ -95,9 +95,17 @@ def _cleanup_temp_data(resume_id: int, job_id: int) -> None:
         conn = get_conn()
         cursor = conn.cursor()
         if resume_id:
-            cursor.execute("DELETE FROM resume WHERE id = ? AND file_name = 'eval_temp'", (resume_id,))
+            execute(
+                cursor,
+                "DELETE FROM resume WHERE id = ? AND file_name = 'eval_temp'",
+                (resume_id,),
+            )
         if job_id:
-            cursor.execute("DELETE FROM job WHERE id = ? AND title LIKE 'eval_temp%'", (job_id,))
+            execute(
+                cursor,
+                "DELETE FROM job WHERE id = ? AND title LIKE 'eval_temp%'",
+                (job_id,),
+            )
         conn.commit()
     except Exception:
         if conn:

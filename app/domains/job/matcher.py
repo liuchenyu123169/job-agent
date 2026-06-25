@@ -5,10 +5,7 @@ from app.core.constants import DEFAULT_USER_ID
 from app.db.crud import get_resume_by_id, insert_task_traces, list_jobs_for_user
 from app.observability.tracer import get_current_spans, traced
 from app.workflows.common import (
-    analyze_resume_job,
-    build_match_reason,
-    ensure_string_list,
-    normalize_match_score,
+    analyze_resume_job_scored,
     save_failed_task,
     save_success_task,
 )
@@ -89,15 +86,11 @@ def recommend_jobs_for_resume(
         title = str(job.get("title") or "")
         logger.info("[RECOMMEND] analyzing job_id=%s title=%s", job_id, title)
         try:
-            analysis = analyze_resume_job(
+            analysis = analyze_resume_job_scored(
                 resume_content=resume_content,
                 job_jd=str(job.get("jd_text") or ""),
             )
-            advantages = ensure_string_list(analysis.get("advantages"))
-            weaknesses = ensure_string_list(analysis.get("weaknesses"))
-            suggestions = ensure_string_list(analysis.get("suggestions"))
-            match_score = normalize_match_score(analysis.get("match_score"))
-            match_reason = build_match_reason(analysis, advantages, weaknesses)
+            match_score = analysis["match_score"]
             logger.info("[RECOMMEND] job_id=%s match_score=%s", job_id, match_score)
             scored_items.append(
                 {
@@ -106,10 +99,10 @@ def recommend_jobs_for_resume(
                     "company": job.get("company"),
                     "title": job.get("title"),
                     "match_score": match_score,
-                    "match_reason": match_reason,
-                    "advantages": advantages,
-                    "weaknesses": weaknesses,
-                    "suggestions": suggestions,
+                    "match_reason": analysis.get("match_reason", ""),
+                    "advantages": analysis.get("advantages", []),
+                    "weaknesses": analysis.get("weaknesses", []),
+                    "suggestions": analysis.get("suggestions", []),
                 }
             )
         except Exception as exc:

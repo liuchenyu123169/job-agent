@@ -3,6 +3,7 @@ export { adminApi } from "./admin.js";
 export { agentApi } from "./agent.js";
 export { authApi } from "./auth.js";
 export { copilotApi } from "./copilot.js";
+export { evaluationApi } from "./evaluation.js";
 export { jobApi } from "./job.js";
 export { knowledgeApi } from "./knowledge.js";
 export { resumeApi } from "./resume.js";

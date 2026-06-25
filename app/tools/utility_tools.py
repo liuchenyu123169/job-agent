@@ -7,7 +7,6 @@ from app.db.crud import (
     list_jobs_for_user,
     list_resumes_for_user,
 )
-from app.rag.rag_service import search_knowledge
 from app.tools.base import ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
@@ -38,7 +37,8 @@ async def search_knowledge_execute(query: str, top_k: int = 5, **kwargs) -> Tool
     """在 RAG 知识库中检索相关知识片段。"""
     logger.info("[search_knowledge] query=%s top_k=%s", query, top_k)
     try:
-        items = search_knowledge(query=str(query), top_k=int(top_k))
+        from app.rag.rag_service import search_knowledge_cached
+        items = await search_knowledge_cached(query=str(query), top_k=int(top_k))
         return ToolResult.ok({"items": items, "count": len(items)})
     except Exception as exc:
         logger.error("[search_knowledge] failed: %s", exc)
