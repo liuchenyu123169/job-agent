@@ -1,13 +1,12 @@
 import json
-import sqlite3
 from typing import Any
 
 from app.core.constants import DEFAULT_USER_ID
 from app.core.security import DuplicateUserError
-from app.db.database import get_conn
+from app.db.database import execute, get_conn, get_last_id
 
 
-def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+def _row_to_dict(row) -> dict[str, Any] | None:
     if row is None:
         return None
     return dict(row)
@@ -32,49 +31,47 @@ def _loads_json_or_raw(value: str | None) -> dict[str, Any] | str | None:
 
 
 def _next_local_id(
-    cursor: sqlite3.Cursor,
+    cursor,
     table_name: str,
     column_name: str,
     user_id: int,
 ) -> int:
-    cursor.execute(
+    execute(cursor,
         f"""
-        SELECT COALESCE(MAX({column_name}), 0)
+        SELECT COALESCE(MAX({column_name}), 0) AS max_val
         FROM {table_name}
         WHERE user_id = ?
         """,
         (user_id,),
     )
     row = cursor.fetchone()
-    current_max = int(row[0] or 0) if row is not None else 0
-    return current_max + 1
+    return int(row["max_val"] or 0) + 1
 
 
 def create_user(username: str, password_hash: str) -> dict[str, Any]:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
-            INSERT INTO user (username, password_hash, updated_at)
+            INSERT INTO "user" (username, password_hash, updated_at)
             VALUES (?, ?, CURRENT_TIMESTAMP)
             """,
             (username, password_hash),
         )
-        user_id = int(cursor.lastrowid)
+        user_id = int(get_last_id(cursor))
         conn.commit()
         user = get_user_by_id(user_id)
         if user is None:
             raise RuntimeError("Created user not found")
         return user
-    except sqlite3.IntegrityError as exc:
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
-        raise DuplicateUserError("Username already exists") from exc
-    except sqlite3.Error as exc:
-        if conn is not None:
-            conn.rollback()
+        msg = str(exc).lower()
+        if "unique" in msg or "duplicate" in msg:
+            raise DuplicateUserError("Username already exists") from exc
         raise RuntimeError("Failed to create user") from exc
     finally:
         if conn is not None:
@@ -82,11 +79,11 @@ def create_user(username: str, password_hash: str) -> dict[str, Any]:
 
 
 def get_user_by_username(username: str) -> dict[str, Any] | None:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, username, password_hash, is_admin, created_at, updated_at
             FROM user
@@ -95,7 +92,7 @@ def get_user_by_username(username: str) -> dict[str, Any] | None:
             (username,),
         )
         return _row_to_dict(cursor.fetchone())
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to query user by username: {username}") from exc
     finally:
         if conn is not None:
@@ -103,11 +100,11 @@ def get_user_by_username(username: str) -> dict[str, Any] | None:
 
 
 def get_user_by_id(user_id: int) -> dict[str, Any] | None:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, username, password_hash, is_admin, created_at, updated_at
             FROM user
@@ -116,7 +113,7 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
             (user_id,),
         )
         return _row_to_dict(cursor.fetchone())
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to query user by id: {user_id}") from exc
     finally:
         if conn is not None:
@@ -124,12 +121,12 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
 
 
 def insert_resume(file_name: str, content: str, user_id: int = DEFAULT_USER_ID) -> int:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
         local_resume_id = _next_local_id(cursor, "resume", "local_resume_id", user_id)
-        cursor.execute(
+        execute(cursor,
             """
             INSERT INTO resume (file_name, content, user_id, local_resume_id)
             VALUES (?, ?, ?, ?)
@@ -137,8 +134,8 @@ def insert_resume(file_name: str, content: str, user_id: int = DEFAULT_USER_ID) 
             (file_name, content, user_id, local_resume_id),
         )
         conn.commit()
-        return int(cursor.lastrowid)
-    except sqlite3.Error as exc:
+        return int(get_last_id(cursor))
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError("Failed to insert resume") from exc
@@ -148,11 +145,11 @@ def insert_resume(file_name: str, content: str, user_id: int = DEFAULT_USER_ID) 
 
 
 def get_resume_by_id(resume_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str, Any] | None:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, local_resume_id, file_name, content, parsed_json, created_at
             FROM resume
@@ -161,7 +158,7 @@ def get_resume_by_id(resume_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str
             (resume_id, user_id),
         )
         return _row_to_dict(cursor.fetchone())
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to query resume by id: {resume_id}") from exc
     finally:
         if conn is not None:
@@ -172,11 +169,11 @@ def get_resume_by_local_id(
     local_resume_id: int,
     user_id: int = DEFAULT_USER_ID,
 ) -> dict[str, Any] | None:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, local_resume_id, file_name, content, parsed_json, created_at
             FROM resume
@@ -185,7 +182,7 @@ def get_resume_by_local_id(
             (local_resume_id, user_id),
         )
         return _row_to_dict(cursor.fetchone())
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to query resume by local id: {local_resume_id}") from exc
     finally:
         if conn is not None:
@@ -193,11 +190,11 @@ def get_resume_by_local_id(
 
 
 def list_resumes_for_user(user_id: int = DEFAULT_USER_ID, limit: int = 100) -> list[dict[str, Any]]:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, local_resume_id, file_name, content, created_at
             FROM resume
@@ -213,7 +210,7 @@ def list_resumes_for_user(user_id: int = DEFAULT_USER_ID, limit: int = 100) -> l
             item["content_preview"] = str(item.get("content") or "")[:200]
             items.append(item)
         return items
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError("Failed to list resumes for user") from exc
     finally:
         if conn is not None:
@@ -226,12 +223,12 @@ def insert_job(
     jd_text: str,
     user_id: int = DEFAULT_USER_ID,
 ) -> int:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
         local_job_id = _next_local_id(cursor, "job", "local_job_id", user_id)
-        cursor.execute(
+        execute(cursor,
             """
             INSERT INTO job (company, title, jd_text, user_id, local_job_id)
             VALUES (?, ?, ?, ?, ?)
@@ -239,8 +236,8 @@ def insert_job(
             (company, title, jd_text, user_id, local_job_id),
         )
         conn.commit()
-        return int(cursor.lastrowid)
-    except sqlite3.Error as exc:
+        return int(get_last_id(cursor))
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError("Failed to insert job") from exc
@@ -250,11 +247,11 @@ def insert_job(
 
 
 def get_job_by_id(job_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str, Any] | None:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, local_job_id, company, title, jd_text, parsed_json, created_at
             FROM job
@@ -263,7 +260,7 @@ def get_job_by_id(job_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str, Any]
             (job_id, user_id),
         )
         return _row_to_dict(cursor.fetchone())
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to query job by id: {job_id}") from exc
     finally:
         if conn is not None:
@@ -274,11 +271,11 @@ def get_job_by_local_id(
     local_job_id: int,
     user_id: int = DEFAULT_USER_ID,
 ) -> dict[str, Any] | None:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, local_job_id, company, title, jd_text, parsed_json, created_at
             FROM job
@@ -287,7 +284,7 @@ def get_job_by_local_id(
             (local_job_id, user_id),
         )
         return _row_to_dict(cursor.fetchone())
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to query job by local id: {local_job_id}") from exc
     finally:
         if conn is not None:
@@ -299,12 +296,12 @@ def list_jobs_for_user(
     limit: int = 10,
     newest_first: bool = False,
 ) -> list[dict[str, Any]]:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
         order_by = "created_at DESC, id DESC" if newest_first else "local_job_id ASC, id ASC"
-        cursor.execute(
+        execute(cursor,
             f"""
             SELECT id, local_job_id, company, title, jd_text, parsed_json, created_at
             FROM job
@@ -320,7 +317,7 @@ def list_jobs_for_user(
             item["jd_preview"] = str(item.get("jd_text") or "")[:200]
             items.append(item)
         return items
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError("Failed to list jobs for user") from exc
     finally:
         if conn is not None:
@@ -362,12 +359,12 @@ def insert_agent_task(
     user_id: int = DEFAULT_USER_ID,
     trace_spans: list[dict] | None = None,
 ) -> int:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
         trace_json_str = json.dumps(trace_spans, ensure_ascii=False) if trace_spans else None
-        cursor.execute(
+        execute(cursor,
             """
             INSERT INTO agent_task (
                 task_type,
@@ -395,8 +392,8 @@ def insert_agent_task(
             ),
         )
         conn.commit()
-        return int(cursor.lastrowid)
-    except sqlite3.Error as exc:
+        return int(get_last_id(cursor))
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError("Failed to insert agent task") from exc
@@ -409,12 +406,12 @@ def insert_task_traces(task_id: int, spans: list[dict]) -> int:
     """批量写入任务执行链路 span。"""
     if not spans:
         return 0
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
         for span in spans:
-            cursor.execute(
+            execute(cursor,
                 """
                 INSERT INTO task_trace (task_id, span_name, duration_ms, metadata)
                 VALUES (?, ?, ?, ?)
@@ -428,7 +425,7 @@ def insert_task_traces(task_id: int, spans: list[dict]) -> int:
             )
         conn.commit()
         return len(spans)
-    except sqlite3.Error as exc:
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError(f"Failed to insert task traces for task {task_id}") from exc
@@ -439,11 +436,11 @@ def insert_task_traces(task_id: int, spans: list[dict]) -> int:
 
 def get_task_traces(task_id: int) -> list[dict]:
     """查询单个任务的所有链路 span。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             "SELECT id, span_name, duration_ms, metadata, created_at FROM task_trace WHERE task_id = ? ORDER BY id",
             (task_id,),
         )
@@ -455,7 +452,7 @@ def get_task_traces(task_id: int) -> list[dict]:
                 d["metadata"] = _loads_json_or_raw(d["metadata"])
             result.append(d)
         return result
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to get task traces for task {task_id}") from exc
     finally:
         if conn is not None:
@@ -463,11 +460,11 @@ def get_task_traces(task_id: int) -> list[dict]:
 
 
 def get_task_by_id(task_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str, Any] | None:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT
                 id,
@@ -494,7 +491,7 @@ def get_task_by_id(task_id: int, user_id: int = DEFAULT_USER_ID) -> dict[str, An
         task["output_json"] = _loads_json(task["output_json"])
         task["trace_json"] = _loads_json_or_raw(task["trace_json"])
         return task
-    except (sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+    except (Exception, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(f"Failed to query task by id: {task_id}") from exc
     finally:
         if conn is not None:
@@ -508,7 +505,7 @@ def list_agent_tasks(
     limit: int = 20,
     user_id: int = DEFAULT_USER_ID,
 ) -> list[dict[str, Any]]:
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
@@ -543,7 +540,7 @@ def list_agent_tasks(
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
 
-        cursor.execute(query, tuple(params))
+        execute(cursor,query, tuple(params))
         rows = cursor.fetchall()
 
         tasks: list[dict[str, Any]] = []
@@ -554,7 +551,7 @@ def list_agent_tasks(
             tasks.append(task)
 
         return tasks
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError("Failed to list agent tasks") from exc
     finally:
         if conn is not None:
@@ -568,11 +565,11 @@ def create_copilot_session(
     user_id: int = DEFAULT_USER_ID,
 ) -> dict[str, Any]:
     """创建 Copilot 会话记录。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             INSERT INTO copilot_session (user_id, goal, status)
             VALUES (?, ?, 'RUNNING')
@@ -580,9 +577,9 @@ def create_copilot_session(
             (user_id, goal),
         )
         conn.commit()
-        session_id = int(cursor.lastrowid)
+        session_id = int(get_last_id(cursor))
         return get_copilot_session(session_id, user_id=user_id) or {}
-    except sqlite3.Error as exc:
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError("Failed to create copilot session") from exc
@@ -596,11 +593,11 @@ def get_copilot_session(
     user_id: int = DEFAULT_USER_ID,
 ) -> dict[str, Any] | None:
     """查询单个 Copilot 会话。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, user_id, goal, status, context_json, task_ids_json, summary_json,
                    created_at, updated_at
@@ -616,7 +613,7 @@ def get_copilot_session(
         session["task_ids_json"] = _loads_json_or_raw(session["task_ids_json"])
         session["summary_json"] = _loads_json_or_raw(session["summary_json"])
         return session
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to query copilot session: {session_id}") from exc
     finally:
         if conn is not None:
@@ -632,7 +629,7 @@ def update_copilot_session(
     user_id: int = DEFAULT_USER_ID,
 ) -> dict[str, Any] | None:
     """更新 Copilot 会话状态和结果。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
@@ -660,10 +657,10 @@ def update_copilot_session(
         params.extend([session_id, user_id])
 
         query = f"UPDATE copilot_session SET {', '.join(set_clauses)} WHERE id = ? AND user_id = ?"
-        cursor.execute(query, tuple(params))
+        execute(cursor,query, tuple(params))
         conn.commit()
         return get_copilot_session(session_id, user_id=user_id)
-    except sqlite3.Error as exc:
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError(f"Failed to update copilot session: {session_id}") from exc
@@ -677,11 +674,11 @@ def list_copilot_sessions(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """列出用户的 Copilot 会话历史。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, user_id, goal, status, context_json, task_ids_json, summary_json,
                    created_at, updated_at
@@ -700,7 +697,7 @@ def list_copilot_sessions(
             session["summary_json"] = _loads_json_or_raw(session["summary_json"])
             sessions.append(session)
         return sessions
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError("Failed to list copilot sessions") from exc
     finally:
         if conn is not None:
@@ -728,22 +725,25 @@ def create_conversation_message(
     tool_name: str | None = None,
 ) -> int | None:
     """插入一条对话消息。已存在则跳过（返回 None）。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
         content_hash = _make_content_hash(role, content, tool_call_id)
-        cursor.execute(
+        execute(cursor,
             """
-            INSERT OR IGNORE INTO conversation_messages
+            INSERT INTO conversation_messages
                 (session_id, user_id, role, content, tool_calls_json, tool_call_id, tool_name, content_hash)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (session_id, content_hash) DO NOTHING
+            RETURNING id
             """,
             (session_id, user_id, role, content, tool_calls_json, tool_call_id, tool_name, content_hash),
         )
+        row = cursor.fetchone()
         conn.commit()
-        return int(cursor.lastrowid) if cursor.lastrowid else None
-    except sqlite3.Error as exc:
+        return int(row["id"]) if row else None
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError("Failed to create conversation message") from exc
@@ -758,11 +758,11 @@ def get_conversation_messages(
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """加载会话的所有消息，按创建时间升序。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             """
             SELECT id, session_id, user_id, role, content, tool_calls_json, tool_call_id, tool_name, created_at
             FROM conversation_messages
@@ -773,7 +773,7 @@ def get_conversation_messages(
             (session_id, user_id, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as exc:
+    except Exception as exc:
         raise RuntimeError(f"Failed to get conversation messages for session {session_id}") from exc
     finally:
         if conn is not None:
@@ -782,18 +782,18 @@ def get_conversation_messages(
 
 def delete_conversation_messages(session_id: int, user_id: int) -> int:
     """删除会话的所有消息，返回删除条数。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             "DELETE FROM conversation_messages WHERE session_id = ? AND user_id = ?",
             (session_id, user_id),
         )
         deleted = cursor.rowcount
         conn.commit()
         return deleted
-    except sqlite3.Error as exc:
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError(f"Failed to delete conversation messages for session {session_id}") from exc
@@ -808,16 +808,16 @@ def update_session_messages_summary(
     messages_summary: str | None,
 ) -> None:
     """更新会话的消息摘要。"""
-    conn: sqlite3.Connection | None = None
+    conn = None
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute(
+        execute(cursor,
             "UPDATE copilot_session SET messages_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
             (messages_summary, session_id, user_id),
         )
         conn.commit()
-    except sqlite3.Error as exc:
+    except Exception as exc:
         if conn is not None:
             conn.rollback()
         raise RuntimeError(f"Failed to update messages_summary for session {session_id}") from exc

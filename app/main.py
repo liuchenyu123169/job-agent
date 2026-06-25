@@ -19,6 +19,7 @@ from app.api.copilot_api import router as copilot_router
 from app.api.admin_api import router as admin_router
 from app.api.evaluation_api import router as evaluation_router
 from app.api.task_api import router as task_router
+from app.api.tasks_api import router as bg_task_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import check_jwt_secret
 from app.db.database import init_db
@@ -46,6 +47,7 @@ app.include_router(job_router)
 app.include_router(copilot_router)
 app.include_router(evaluation_router)
 app.include_router(task_router)
+app.include_router(bg_task_router)
 app.include_router(admin_router)
 
 # Prometheus 指标暴露（/metrics 端点）

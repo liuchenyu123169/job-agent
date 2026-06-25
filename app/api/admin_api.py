@@ -1,37 +1,41 @@
 """管理员 API — 用户管理、全局资源查询（分页+筛选）、聚合统计、链路追踪。"""
 
 import json
-import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_admin_user
 from app.db.crud import get_user_by_id
-from app.db.database import get_conn
+from app.db.database import execute, execute_sql, fetch_all, fetch_one, get_conn
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
-# ── 工具函数 ──
+# ── 本地别名（兼容函数体内现有调用）──
+_fetchall = fetch_all
+_fetchone = fetch_one
+_run = execute_sql
 
-def _paginate(query: str, params: tuple, page: int, page_size: int, conn: sqlite3.Connection) -> dict:
+
+def _paginate(query: str, params: tuple, page: int, page_size: int, conn) -> dict:
     """执行分页查询，返回 {items, total, page, page_size}。"""
     # 查总数
-    count_sql = f"SELECT COUNT(*) FROM ({query})"
-    total = conn.execute(count_sql, params).fetchone()[0]
+    count_sql = f"SELECT COUNT(*) as cnt FROM ({query}) AS paged_query"
+    total_row = _fetchone(conn, count_sql, params) or {"cnt": 0}
+    total = total_row["cnt"]
     # 查分页数据
     offset = (page - 1) * page_size
     data_sql = f"{query} LIMIT {page_size} OFFSET {offset}"
-    items = [dict(row) for row in conn.execute(data_sql, params).fetchall()]
+    items = _fetchall(conn, data_sql, params)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
-def _get_username_map(conn: sqlite3.Connection) -> dict[int, str]:
-    rows = conn.execute('SELECT id, username FROM "user"').fetchall()
-    return {r[0]: r[1] for r in rows}
+def _get_username_map(conn) -> dict[int, str]:
+    rows = _fetchall(conn, 'SELECT id, username FROM "user"')
+    return {r["id"]: r["username"] for r in rows}
 
 
-def _attach_usernames(items: list[dict], conn: sqlite3.Connection) -> list[dict]:
+def _attach_usernames(items: list[dict], conn) -> list[dict]:
     username_map = _get_username_map(conn)
     for item in items:
         item["username"] = username_map.get(item.get("user_id"), "")
@@ -46,9 +50,10 @@ def _attach_usernames(items: list[dict], conn: sqlite3.Connection) -> list[dict]
 def list_users(_admin: dict = Depends(get_admin_user)) -> list[dict]:
     conn = get_conn()
     try:
-        return [dict(r) for r in conn.execute(
-            'SELECT id, username, is_admin, created_at, updated_at FROM "user" ORDER BY id'
-        ).fetchall()]
+        return _fetchall(
+            conn,
+            'SELECT id, username, is_admin, created_at, updated_at FROM "user" ORDER BY id',
+        )
     finally:
         conn.close()
 
@@ -61,7 +66,11 @@ def update_user(user_id: int, body: dict, _admin: dict = Depends(get_admin_user)
     is_admin = bool(body.get("is_admin", False))
     conn = get_conn()
     try:
-        conn.execute("UPDATE \"user\" SET is_admin = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (int(is_admin), user_id))
+        _run(
+            conn,
+            'UPDATE "user" SET is_admin = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            (int(is_admin), user_id),
+        )
         conn.commit()
         return {"user_id": user_id, "is_admin": is_admin}
     finally:
@@ -76,11 +85,11 @@ def delete_user(user_id: int, _admin: dict = Depends(get_admin_user)) -> dict:
     conn = get_conn()
     try:
         for table in ["conversation_messages", "copilot_session", "agent_task", "job", "resume"]:
-            conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
-        conn.execute('DELETE FROM "user" WHERE id = ?', (user_id,))
+            _run(conn, f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+        _run(conn, 'DELETE FROM "user" WHERE id = ?', (user_id,))
         conn.commit()
         return {"user_id": user_id, "deleted": True}
-    except sqlite3.Error as exc:
+    except Exception as exc:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"删除用户失败: {exc}") from exc
     finally:
@@ -180,19 +189,20 @@ def list_all_tasks(
                 except (json.JSONDecodeError, TypeError):
                     pass
             # 从 task_trace 表查 span
-            spans = conn.execute(
+            spans = _fetchall(
+                conn,
                 "SELECT span_name, duration_ms, metadata FROM task_trace WHERE task_id = ? ORDER BY id",
                 (item["id"],),
-            ).fetchall()
+            )
             trace = []
             for s in spans:
                 meta = {}
-                if s[2]:
+                if s["metadata"]:
                     try:
-                        meta = json.loads(s[2]) if isinstance(s[2], str) else s[2]
+                        meta = json.loads(s["metadata"]) if isinstance(s["metadata"], str) else s["metadata"]
                     except (json.JSONDecodeError, TypeError):
                         pass
-                trace.append({"name": s[0], "duration_ms": s[1], "metadata": meta})
+                trace.append({"name": s["span_name"], "duration_ms": s["duration_ms"], "metadata": meta})
             item["trace_json"] = trace if trace else None
 
         result["items"] = _attach_usernames(result["items"], conn)
@@ -249,19 +259,20 @@ def list_traces(
         for item in result["items"]:
             item["username"] = ""
             # 查该任务的所有 span
-            spans = conn.execute(
+            spans = _fetchall(
+                conn,
                 "SELECT span_name, duration_ms, metadata FROM task_trace WHERE task_id = ? ORDER BY id",
                 (item["id"],),
-            ).fetchall()
+            )
             trace = []
             for s in spans:
                 meta = {}
-                if s[2]:
+                if s["metadata"]:
                     try:
-                        meta = json.loads(s[2]) if isinstance(s[2], str) else s[2]
+                        meta = json.loads(s["metadata"]) if isinstance(s["metadata"], str) else s["metadata"]
                     except (json.JSONDecodeError, TypeError):
                         pass
-                trace.append({"name": s[0], "duration_ms": s[1], "metadata": meta})
+                trace.append({"name": s["span_name"], "duration_ms": s["duration_ms"], "metadata": meta})
             item["trace_json"] = trace
             item["total_duration_ms"] = round(sum(t.get("duration_ms", 0) for t in trace), 2)
 
@@ -281,20 +292,20 @@ def get_stats(_admin: dict = Depends(get_admin_user)) -> dict:
     try:
         c = conn.cursor()
 
-        c.execute('SELECT COUNT(*) FROM "user"');          user_count = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM resume");           resume_count = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM job");              job_count = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM agent_task");       task_count = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM copilot_session WHERE status != 'ARCHIVED'"); session_count = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM conversation_messages"); msg_count = c.fetchone()[0]
+        c.execute('SELECT COUNT(*) as cnt FROM "user"');          user_count = c.fetchone()["cnt"]
+        c.execute("SELECT COUNT(*) as cnt FROM resume");           resume_count = c.fetchone()["cnt"]
+        c.execute("SELECT COUNT(*) as cnt FROM job");              job_count = c.fetchone()["cnt"]
+        c.execute("SELECT COUNT(*) as cnt FROM agent_task");       task_count = c.fetchone()["cnt"]
+        c.execute("SELECT COUNT(*) as cnt FROM copilot_session WHERE status != 'ARCHIVED'"); session_count = c.fetchone()["cnt"]
+        c.execute("SELECT COUNT(*) as cnt FROM conversation_messages"); msg_count = c.fetchone()["cnt"]
 
         # 按状态统计
-        c.execute("SELECT status, COUNT(*) FROM agent_task GROUP BY status")
-        task_by_status = {r[0]: r[1] for r in c.fetchall()}
+        c.execute("SELECT status, COUNT(*) as cnt FROM agent_task GROUP BY status")
+        task_by_status = {r["status"]: r["cnt"] for r in c.fetchall()}
 
         # 按类型统计
-        c.execute("SELECT task_type, COUNT(*) FROM agent_task GROUP BY task_type")
-        task_by_type = {r[0]: r[1] for r in c.fetchall()}
+        c.execute("SELECT task_type, COUNT(*) as cnt FROM agent_task GROUP BY task_type")
+        task_by_type = {r["task_type"]: r["cnt"] for r in c.fetchall()}
 
         # 平均耗时（从 trace_json 估算）
         c.execute("SELECT trace_json FROM agent_task WHERE trace_json IS NOT NULL AND trace_json != ''")
@@ -309,8 +320,8 @@ def get_stats(_admin: dict = Depends(get_admin_user)) -> dict:
         avg_duration = round(sum(durations) / len(durations), 1) if durations else 0
 
         # 最近 24h 任务数
-        c.execute("SELECT COUNT(*) FROM agent_task WHERE created_at >= datetime('now', '-1 day')")
-        tasks_24h = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) as cnt FROM agent_task WHERE created_at >= NOW() - INTERVAL '1 day'")
+        tasks_24h = c.fetchone()["cnt"]
 
         return {
             "users": user_count,

@@ -13,7 +13,7 @@ from typing import Any
 
 
 class MetricsCollector:
-    """线程不安全的内存指标聚合器（单进程使用，适合 SQLite 单写场景）。"""
+    """线程不安全的内存指标聚合器（单进程使用）。"""
 
     def __init__(self) -> None:
         self._started_at = time.time()

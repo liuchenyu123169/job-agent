@@ -3,16 +3,12 @@ __pycache__/
 *.pyc
 *.pyo
 .env
-*.db
-*.db-shm
-*.db-wal
 .idea/
 .vscode/
 data/chroma/
 frontend/dist/
 frontend/node_modules/
 evaluation_results/
-tests/test.md
 frontend/.vite/
 
 # OS

@@ -1,22 +1,51 @@
-import sqlite3
-from pathlib import Path
-
-from app.core.constants import DEFAULT_USER_ID
-
-
-DB_PATH = Path(__file__).resolve().parents[2] / "job_agent.db"
-
-
-def get_conn() -> sqlite3.Connection:
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        return conn
-    except sqlite3.Error as exc:
-        raise RuntimeError(f"Failed to connect to database: {DB_PATH}") from exc
-
-
+import logging
+import os
+import re
 from contextlib import contextmanager
+from datetime import datetime
+
+import psycopg2
+import psycopg2.extras
+
+logger = logging.getLogger(__name__)
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL 未配置。请在 .env 中设置 PostgreSQL 连接字符串，\n"
+        "例如: DATABASE_URL=postgresql://jobagent:jobagent@localhost:5432/jobagent"
+    )
+
+
+class _StringifyDictCursor(psycopg2.extras.RealDictCursor):
+    """RealDictCursor 子类：自动将 datetime 值转为 ISO 字符串。"""
+
+    def fetchone(self):
+        row = super().fetchone()
+        if row:
+            for k in list(row.keys()):
+                if isinstance(row[k], datetime):
+                    row[k] = row[k].isoformat()
+        return row
+
+    def fetchall(self):
+        rows = super().fetchall()
+        for row in rows:
+            for k in list(row.keys()):
+                if isinstance(row[k], datetime):
+                    row[k] = row[k].isoformat()
+        return rows
+
+
+def get_conn():
+    """获取 PostgreSQL 数据库连接（dict-like row access，datetime → ISO 字符串）。"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.cursor_factory = _StringifyDictCursor
+        return conn
+    except psycopg2.Error as exc:
+        raise RuntimeError(f"Failed to connect to PostgreSQL: {DATABASE_URL}") from exc
 
 
 @contextmanager
@@ -33,286 +62,59 @@ def get_db():
         conn.close()
 
 
-def _get_table_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    return {str(row[1]) for row in cursor.fetchall()}
+def execute(cursor, sql_text: str, params: tuple = ()) -> None:
+    """执行 SQL，自动适配 PostgreSQL 语法（? → %s，保留字 "user" 加引号）。"""
+    if "?" in sql_text:
+        sql_text = sql_text.replace("?", "%s")
+    if "user" in sql_text:
+        for keyword in ("FROM", "INTO", "UPDATE", "TABLE", "JOIN", "ON", "REFERENCES"):
+            sql_text = re.sub(
+                rf'({keyword}\s+)user\b',
+                rf'\1"user"',
+                sql_text,
+            )
+    cursor.execute(sql_text, params)
 
 
-def _ensure_user_id_column(cursor: sqlite3.Cursor, table_name: str) -> None:
-    columns = _get_table_columns(cursor, table_name)
-    if "user_id" not in columns:
-        cursor.execute(
-            f"ALTER TABLE {table_name} ADD COLUMN user_id INTEGER DEFAULT {DEFAULT_USER_ID}"
-        )
-    cursor.execute(
-        f"UPDATE {table_name} SET user_id = ? WHERE user_id IS NULL",
-        (DEFAULT_USER_ID,),
-    )
-
-
-def _ensure_column(
-    cursor: sqlite3.Cursor,
-    table_name: str,
-    column_name: str,
-    column_type: str,
-) -> None:
-    """安全添加列：如果列不存在则 ALTER TABLE ADD COLUMN。"""
-    columns = _get_table_columns(cursor, table_name)
-    if column_name not in columns:
-        cursor.execute(
-            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
-        )
-
-
-def _ensure_local_id_column(
-    cursor: sqlite3.Cursor,
-    table_name: str,
-    column_name: str,
-) -> None:
-    columns = _get_table_columns(cursor, table_name)
-    if column_name not in columns:
-        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} INTEGER")
-
-
-def _backfill_local_ids(
-    cursor: sqlite3.Cursor,
-    table_name: str,
-    local_id_column: str,
-) -> None:
-    cursor.execute(
-        f"""
-        SELECT id, user_id
-        FROM {table_name}
-        ORDER BY user_id ASC, COALESCE(created_at, CURRENT_TIMESTAMP) ASC, id ASC
-        """
-    )
-    rows = cursor.fetchall()
-    counters: dict[int, int] = {}
-    for row in rows:
-        row_id = int(row["id"])
-        user_id = int(row["user_id"] or DEFAULT_USER_ID)
-        counters[user_id] = counters.get(user_id, 0) + 1
-        cursor.execute(
-            f"""
-            UPDATE {table_name}
-            SET {local_id_column} = ?
-            WHERE id = ? AND ({local_id_column} IS NULL OR {local_id_column} <= 0)
-            """,
-            (counters[user_id], row_id),
-        )
-
-
-def _ensure_local_id_index(
-    cursor: sqlite3.Cursor,
-    table_name: str,
-    local_id_column: str,
-) -> None:
-    cursor.execute(
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_user_{local_id_column}_unique
-        ON {table_name} (user_id, {local_id_column})
-        WHERE {local_id_column} IS NOT NULL
-        """
-    )
-
-
-def _ensure_user_table(cursor: sqlite3.Cursor) -> None:
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS user (
-            id INTEGER PRIMARY KEY,
-            username TEXT NOT NULL,
-            password_hash TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    columns = _get_table_columns(cursor, "user")
-    if "password_hash" not in columns:
-        cursor.execute("ALTER TABLE user ADD COLUMN password_hash TEXT")
-    if "updated_at" not in columns:
-        cursor.execute("ALTER TABLE user ADD COLUMN updated_at DATETIME")
-    cursor.execute(
-        """
-        UPDATE user
-        SET updated_at = COALESCE(updated_at, created_at, datetime('now'))
-        """
-    )
-    cursor.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_username_unique
-        ON user (username)
-        """
-    )
+def get_last_id(cursor, table_name: str = "") -> int:
+    """获取最后插入的 ID（需配合 RETURNING 使用）。"""
+    cursor.execute("SELECT lastval()")
+    return int(cursor.fetchone()["lastval"])
 
 
 def init_db() -> None:
-    conn: sqlite3.Connection | None = None
+    """Schema 由 Alembic 管理。"""
+    logger.info("PostgreSQL — schema managed by Alembic, init_db() is a no-op")
+
+
+# ── 通用查询辅助函数 ──
+
+def fetch_all(conn, query: str, params: tuple = ()) -> list[dict]:
+    """执行查询并返回全部结果行（dict 列表）。"""
+    cursor = conn.cursor()
     try:
-        conn = get_conn()
-        cursor = conn.cursor()
-
-        # 并发优化：WAL 模式 + 写锁等待
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-
-        _ensure_user_table(cursor)
-
-        cursor.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS resume (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_name TEXT NOT NULL,
-                content TEXT NOT NULL,
-                parsed_json TEXT,
-                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-
-        cursor.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS job (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company TEXT,
-                title TEXT NOT NULL,
-                jd_text TEXT NOT NULL,
-                parsed_json TEXT,
-                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-
-        cursor.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS agent_task (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_type TEXT NOT NULL,
-                resume_id INTEGER,
-                job_id INTEGER,
-                input_json TEXT,
-                output_json TEXT,
-                status TEXT NOT NULL,
-                error_msg TEXT,
-                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (resume_id) REFERENCES resume (id),
-                FOREIGN KEY (job_id) REFERENCES job (id)
-            )
-            """
-        )
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS task_trace (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER NOT NULL,
-                span_name TEXT NOT NULL,
-                duration_ms REAL NOT NULL,
-                metadata TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (task_id) REFERENCES agent_task (id)
-            )
-            """
-        )
-
-        cursor.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS copilot_session (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER DEFAULT {DEFAULT_USER_ID},
-                goal TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'RUNNING',
-                context_json TEXT,
-                task_ids_json TEXT,
-                summary_json TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES user (id)
-            )
-            """
-        )
-
-        cursor.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS conversation_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT,
-                tool_calls_json TEXT,
-                tool_call_id TEXT,
-                tool_name TEXT,
-                content_hash TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (session_id) REFERENCES copilot_session (id),
-                FOREIGN KEY (user_id) REFERENCES user (id)
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_msg_dedup
-            ON conversation_messages (session_id, content_hash)
-            """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_conversation_msg_session
-            ON conversation_messages (session_id, created_at)
-            """
-        )
-
-        # 给 copilot_session 加 messages_summary 列（安全迁移）
-        _ensure_column(cursor, "copilot_session", "messages_summary", "TEXT")
-
-        # 安全迁移：is_admin 列
-        _ensure_column(cursor, "user", "is_admin", "INTEGER DEFAULT 0")
-
-        # 安全迁移：agent_task 表加 trace_json 列（链路追踪数据）
-        _ensure_column(cursor, "agent_task", "trace_json", "TEXT")
-
-        # 确保已存在的 default_user 也是管理员 + 有默认密码
-        cursor.execute(
-            "UPDATE user SET is_admin = 1 WHERE id = ? AND (is_admin IS NULL OR is_admin = 0)",
-            (DEFAULT_USER_ID,),
-        )
-
-        from app.core.security import hash_password  # noqa: E402
-        default_pw = hash_password("123456")
-        cursor.execute(
-            """
-            INSERT OR IGNORE INTO user (id, username, password_hash, updated_at, is_admin)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP, 1)
-            """,
-            (DEFAULT_USER_ID, "default_user", default_pw),
-        )
-        # 兼容旧数据：如果 password_hash 为空则补上
-        cursor.execute(
-            "UPDATE user SET password_hash = ? WHERE id = ? AND password_hash IS NULL",
-            (default_pw, DEFAULT_USER_ID),
-        )
-
-        _ensure_user_id_column(cursor, "resume")
-        _ensure_user_id_column(cursor, "job")
-        _ensure_user_id_column(cursor, "agent_task")
-        _ensure_local_id_column(cursor, "resume", "local_resume_id")
-        _ensure_local_id_column(cursor, "job", "local_job_id")
-        _backfill_local_ids(cursor, "resume", "local_resume_id")
-        _backfill_local_ids(cursor, "job", "local_job_id")
-        _ensure_local_id_index(cursor, "resume", "local_resume_id")
-        _ensure_local_id_index(cursor, "job", "local_job_id")
-
-        conn.commit()
-    except sqlite3.Error as exc:
-        if conn is not None:
-            conn.rollback()
-        raise RuntimeError("Failed to initialize database tables") from exc
+        execute(cursor, query, params)
+        return [dict(row) for row in cursor.fetchall()]
     finally:
-        if conn is not None:
-            conn.close()
+        cursor.close()
+
+
+def fetch_one(conn, query: str, params: tuple = ()) -> dict | None:
+    """执行查询并返回第一行（dict），无结果返回 None。"""
+    cursor = conn.cursor()
+    try:
+        execute(cursor, query, params)
+        row = cursor.fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        cursor.close()
+
+
+def execute_sql(conn, query: str, params: tuple = ()) -> int:
+    """执行写操作并返回受影响行数。"""
+    cursor = conn.cursor()
+    try:
+        execute(cursor, query, params)
+        return cursor.rowcount
+    finally:
+        cursor.close()

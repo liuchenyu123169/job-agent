@@ -6,10 +6,9 @@ from app.db.crud import (
     insert_job,
     insert_resume,
 )
-from app.db.database import DB_PATH, get_conn, init_db
+from app.db.database import get_conn, init_db
 
 __all__ = [
-    "DB_PATH",
     "get_conn",
     "init_db",
     "insert_resume",
