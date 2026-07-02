@@ -116,8 +116,9 @@ class ComparisonTransformer(BaseTransformer):
         """从 outputs 和 goal 中提取比较对象名称。"""
         subjects: list[str] = []
         for out in outputs:
-            # 尝试从 content.query 提取
-            query = out.get("content", {}).get("query", "")
+            # 优先从 meta/content 中的原始 query 提取（step 级记录）
+            meta = out.get("meta", {})
+            query = meta.get("query", "") or out.get("content", {}).get("query", "")
             if query:
                 subjects.append(query[:40])
                 continue

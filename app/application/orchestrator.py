@@ -36,7 +36,7 @@ VERIFY_MODEL = "fast"
 
 def _make_short_summary(task_state, context) -> str:
     """Generate a one-line status summary."""
-    count = len(context.executed_tools)
+    count = len(context.step_outputs) if getattr(context, "step_outputs", None) else len(context.executed_tools)
     verified = sum(1 for v in task_state.verification_results if v.get("passed"))
     failed = len(task_state.failed_steps)
     parts = [f"{count} steps executed"]
@@ -416,6 +416,7 @@ class ClosedLoopOrchestrator:
             vr = await self._verify_step(step, step_result, task_state.acceptance_criteria, context, goal_type=task_state.goal_type)
             step["verification_result"] = vr.to_dict()
             task_state.verification_results.append(vr.to_dict())
+            context.update_step_verification(step_id, vr.score, vr.passed)
             await self._persist(task_state, run_id, user_id)
 
         return task_state
@@ -537,7 +538,13 @@ class ClosedLoopOrchestrator:
                 tool_result = await exec_task
                 if tool_result.success and tool_result.data:
                     step_result = tool_result.data
-                    context.record_result(tool_name, step_result)
+                    context.record_result(
+                        tool_name,
+                        step_result,
+                        step_id=step_id,
+                        step_name=step.get("name", ""),
+                        source_query=str(params.get("query", "")),
+                    )
                 else:
                     step_result = {"error": tool_result.error or "Tool execution failed",
                                    "error_category": "blocked"}  # 工具返回 failure → blocked
@@ -588,6 +595,7 @@ class ClosedLoopOrchestrator:
             vr = await self._verify_step(step, step_result, task_state.acceptance_criteria, context, goal_type=task_state.goal_type)
             step["verification_result"] = vr.to_dict()
             task_state.verification_results.append(vr.to_dict())
+            context.update_step_verification(step_id, vr.score, vr.passed)
             await self._persist(task_state, run_id, user_id)
 
     async def _execute_step(self, step, context, user_id):
@@ -617,7 +625,13 @@ class ClosedLoopOrchestrator:
         try:
             result = await tool.execute(**params)
             if result.success:
-                context.record_result(tool_name, result.data or {})
+                context.record_result(
+                    tool_name,
+                    result.data or {},
+                    step_id=step_id,
+                    step_name=step.get("name", ""),
+                    source_query=str(params.get("query", "")),
+                )
                 return result.data or {}
             else:
                 return {"error": result.error or "Tool execution failed"}
@@ -821,12 +835,31 @@ class ClosedLoopOrchestrator:
                     step_tool_to_score[tool_n] = vr_map[sid]
 
         outputs = []
-        for tool_name in context.executed_tools:
-            raw = context.tool_results.get(tool_name, {})
-            norm = normalize_tool_output(tool_name, raw)
-            if tool_name in step_tool_to_score:
-                norm["meta"]["verifier_score"] = step_tool_to_score[tool_name]
-            outputs.append(norm)
+        if context.step_outputs:
+            for step_output in context.step_outputs:
+                norm = normalize_tool_output(step_output.tool_name, step_output.raw_result)
+                norm.setdefault("meta", {})
+                norm["meta"]["step_id"] = step_output.step_id
+                norm["meta"]["tool_name"] = step_output.tool_name
+                norm["meta"]["execution_index"] = step_output.execution_index
+                if step_output.source_query:
+                    norm["meta"]["query"] = step_output.source_query
+                    norm.setdefault("content", {})
+                    norm["content"].setdefault("query", step_output.source_query)
+                if step_output.verifier_score is not None:
+                    norm["meta"]["verifier_score"] = step_output.verifier_score
+                elif step_output.tool_name in step_tool_to_score:
+                    norm["meta"]["verifier_score"] = step_tool_to_score[step_output.tool_name]
+                step_output.normalized_output = norm
+                outputs.append(norm)
+        else:
+            for tool_name in context.executed_tools:
+                raw = context.tool_results.get(tool_name, {})
+                norm = normalize_tool_output(tool_name, raw)
+                if tool_name in step_tool_to_score:
+                    norm.setdefault("meta", {})
+                    norm["meta"]["verifier_score"] = step_tool_to_score[tool_name]
+                outputs.append(norm)
 
         task_type = context.task_type or task_state.goal_type
 
@@ -871,8 +904,8 @@ class ClosedLoopOrchestrator:
     def _extract_suggestions(task_state, context):
         """Extract follow-up suggestions from tool outputs."""
         suggestions = []
-        for tool_name in context.executed_tools:
-            data = context.tool_results.get(tool_name, {})
+        for step_output in context.step_outputs:
+            data = step_output.raw_result
             analysis = data.get("analysis")
             if isinstance(analysis, dict):
                 sug = analysis.get("suggestions") or analysis.get("recommendations") or []

@@ -1,12 +1,36 @@
 """Pipeline 状态定义 — LangGraph 用的 TypedDict + 累积上下文数据类。"""
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, TypedDict
 
 from langchain_core.messages import BaseMessage
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StepOutput:
+    """单个 step 的执行产物。
+
+    与 tool_results 的区别：
+      - tool_results: 兼容旧逻辑，按 tool_name 保留最后一次结果
+      - step_outputs: 新逻辑，按 step 维度保留每次调用结果，避免同工具多次调用互相覆盖
+    """
+
+    step_id: str = ""
+    tool_name: str = ""
+    step_name: str = ""
+    raw_result: dict[str, Any] = field(default_factory=dict)
+    normalized_output: dict[str, Any] = field(default_factory=dict)
+    verifier_score: float | None = None
+    verifier_passed: bool | None = None
+    source_query: str = ""
+    execution_index: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为可写入 summary_json 的平面结构。"""
+        return asdict(self)
 
 
 @dataclass
@@ -37,8 +61,12 @@ class PipelineContext:
     session_id: int | None = None
     messages_summary: str | None = None
 
-    # 各步骤的执行结果（按工具名存储）
+    # 各步骤的执行结果（兼容旧逻辑：按工具名保留最后一次结果）
     tool_results: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # 同一工具多次调用时保留完整历史（按工具名聚合）
+    tool_results_list: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # 按 step 维度保留完整执行历史（新逻辑）
+    step_outputs: list[StepOutput] = field(default_factory=list)
 
     # 已完成的工具调用顺序记录
     executed_tools: list[str] = field(default_factory=list)
@@ -46,7 +74,15 @@ class PipelineContext:
     # 产生的任务 ID 列表
     task_ids: list[int] = field(default_factory=list)
 
-    def record_result(self, tool_name: str, result: dict[str, Any]) -> None:
+    def record_result(
+        self,
+        tool_name: str,
+        result: dict[str, Any],
+        *,
+        step_id: str = "",
+        step_name: str = "",
+        source_query: str = "",
+    ) -> None:
         """记录一个工具的执行结果。"""
         self.executed_tools.append(tool_name)
         if not isinstance(result, dict):
@@ -56,9 +92,29 @@ class PipelineContext:
             )
             result = {"_raw": str(result)}
         self.tool_results[tool_name] = result
+        self.tool_results_list.setdefault(tool_name, []).append(result)
+        self.step_outputs.append(StepOutput(
+            step_id=step_id,
+            tool_name=tool_name,
+            step_name=step_name,
+            raw_result=result,
+            source_query=source_query,
+            execution_index=len(self.step_outputs),
+        ))
         task_id = result.get("task_id")
         if task_id is not None:
             self.task_ids.append(int(task_id))
+
+    def update_step_verification(self, step_id: str, score: float, passed: bool) -> None:
+        """回填 step 级验证结果，供 finalizer/quality gate 使用。"""
+        for step_output in reversed(self.step_outputs):
+            if step_output.step_id == step_id:
+                step_output.verifier_score = score
+                step_output.verifier_passed = passed
+                if step_output.normalized_output:
+                    step_output.normalized_output.setdefault("meta", {})
+                    step_output.normalized_output["meta"]["verifier_score"] = score
+                return
 
     def to_summary(self) -> dict[str, Any]:
         """将上下文导出为可供汇总的结构。"""
@@ -74,6 +130,8 @@ class PipelineContext:
             "expected_output_shape": self.expected_output_shape,
             "execution_mode": self.execution_mode,
             "tool_results": dict(self.tool_results),
+            "tool_results_list": dict(self.tool_results_list),
+            "step_outputs": [s.to_dict() for s in self.step_outputs],
         }
 
 

@@ -360,7 +360,13 @@ async def _direct_tools(
                 _token_callback.reset(token_token)
 
             if result.success and result.data:
-                context.record_result(tool_name, result.data)
+                context.record_result(
+                    tool_name,
+                    result.data,
+                    step_id=tool_name,
+                    step_name=tool_name,
+                    source_query=str(params.get("query", "")),
+                )
                 yield step_complete_event(tool_name, result.data)
                 success_count += 1
             else:

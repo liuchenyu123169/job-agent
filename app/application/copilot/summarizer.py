@@ -22,12 +22,25 @@ def summarize_result(
     steps: list[dict[str, Any]] = []
     outputs: list[dict[str, Any]] = []
 
-    for tool_name in context.executed_tools:
-        raw = context.tool_results.get(tool_name, {})
-        norm = normalize_tool_output(tool_name, raw)
-        outputs.append(norm)
-        step_summary = _summarize_step(tool_name, norm)
-        steps.append(step_summary)
+    if context.step_outputs:
+        for step_output in context.step_outputs:
+            norm = step_output.normalized_output or normalize_tool_output(
+                step_output.tool_name, step_output.raw_result,
+            )
+            if step_output.verifier_score is not None:
+                norm.setdefault("meta", {})
+                norm["meta"]["verifier_score"] = step_output.verifier_score
+            outputs.append(norm)
+            step_summary = _summarize_step(step_output.tool_name, norm)
+            step_summary["step_id"] = step_output.step_id
+            steps.append(step_summary)
+    else:
+        for tool_name in context.executed_tools:
+            raw = context.tool_results.get(tool_name, {})
+            norm = normalize_tool_output(tool_name, raw)
+            outputs.append(norm)
+            step_summary = _summarize_step(tool_name, norm)
+            steps.append(step_summary)
 
     goal = context.goal or "任务报告"
     effective_task_type = task_type or context.task_type
