@@ -3,8 +3,8 @@
 import asyncio
 import logging
 
-from app.domains.job.matcher import recommend_jobs_for_resume
-from app.tools.base import ToolDefinition, ToolResult
+from app.domain.job.matcher import recommend_jobs_for_resume
+from app.tools.base import InputRequirements, ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -54,12 +54,24 @@ async def recommend_jobs_execute(
         )
         if result.get("error_msg"):
             return ToolResult.fail(str(result["error_msg"]))
+        items = result.get("items") or []
+        # 构建可读文本摘要
+        text_lines = ["# 岗位推荐结果", ""]
+        for i, item in enumerate(items, 1):
+            text_lines.append(
+                f"**{i}. {item.get('job_name', '未知岗位')}** "
+                f"(匹配度: {item.get('match_score', 'N/A')} 分)"
+            )
+            if item.get("match_reason"):
+                text_lines.append(f"  {item['match_reason'][:200]}")
+            text_lines.append("")
         return ToolResult.ok({
             "task_id": result.get("task_id"),
             "resume_id": result.get("resume_id"),
             "top_k": result.get("top_k"),
             "candidate_job_count": result.get("candidate_job_count"),
-            "items": result.get("items") or [],
+            "items": items,
+            "text": "\n".join(text_lines),
         })
     except Exception as exc:
         logger.error("[recommend_jobs] failed: %s", exc)
@@ -77,6 +89,7 @@ recommend_jobs_tool = ToolDefinition(
     execute=recommend_jobs_execute,
     keywords=["推荐", "岗位推荐", "适合", "哪些岗位"],
     render_type="scored_list",
+    input_requirements=InputRequirements(resume_id=True),
 )
 
 tool_registry.register(recommend_jobs_tool)

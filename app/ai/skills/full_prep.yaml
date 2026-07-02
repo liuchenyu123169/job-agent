@@ -1,0 +1,28 @@
+# 全面备战 — 完整求职准备流程
+name: "全面备战"
+description: "完整面试准备：匹配分析 → 简历优化 → 面试题生成"
+keywords:
+  - "全面备战"
+  - "一条龙"
+  - "全套"
+  - "完整流程"
+  - "全面准备"
+  - "全程"
+  - "全流程"
+  - "一站式"
+  - "整个流程"
+  - "从分析到面试"
+  - "全套准备"
+mode: workflow
+tools:
+  - match_analyze
+  - optimize_resume
+  - generate_interview_questions
+hints:
+  preferred_steps:
+    - tool: match_analyze
+    - tool: optimize_resume
+      depends_on: [step_1]
+    - tool: generate_interview_questions
+      depends_on: [step_2]
+  goal_type: prepare

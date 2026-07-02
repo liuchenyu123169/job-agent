@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_current_user
-from app.db.crud import get_task_by_id, list_agent_tasks
-from app.schemas.task_schema import TaskListResponse, TaskResponse
+from app.infrastructure.db.crud import get_task_by_id, list_agent_tasks
+from app.shared.schemas.task_schema import TaskListResponse, TaskResponse
 
 router = APIRouter(prefix="/api/task", tags=["Task"])
 

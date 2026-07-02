@@ -6,5 +6,5 @@ export const taskApi = {
   },
   getTask(taskId) {
     return safeGet(`/api/task/${taskId}`, undefined, "getTask");
-  }
+  },
 };

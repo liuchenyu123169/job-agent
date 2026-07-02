@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.api.deps import get_current_user
-from app.db.crud import (
+from app.infrastructure.db.crud import (
     get_resume_by_id,
     get_resume_by_local_id,
     insert_resume,
     list_resumes_for_user,
 )
-from app.schemas.resume_schema import (
+from app.shared.schemas.resume_schema import (
     ResumeCreateRequest,
     ResumeCreateResponse,
     ResumeListItem,
@@ -15,7 +15,7 @@ from app.schemas.resume_schema import (
     ResumeResponse,
     ResumeUploadResponse,
 )
-from app.utils.resume_parser import parse_resume_file
+from app.shared.utils.resume_parser import parse_resume_file
 
 router = APIRouter(prefix="/api/resume", tags=["Resume"])
 

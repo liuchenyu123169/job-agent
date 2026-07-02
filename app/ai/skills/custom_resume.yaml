@@ -1,0 +1,26 @@
+# 定制简历生成 — 根据候选人背景和目标岗位生成完整优化简历
+name: "定制简历"
+description: "根据候选人背景（已有简历或自由文本）和目标岗位 JD，生成完整优化简历"
+keywords:
+  - "生成简历"
+  - "定制简历"
+  - "写简历"
+  - "简历生成"
+  - "做简历"
+  - "制作简历"
+  - "帮我写简历"
+  - "生成一份简历"
+  - "写一份简历"
+  - "写个简历"
+  - "生成个简历"
+  - "做一份简历"
+  - "制作一份简历"
+mode: workflow
+tools:
+  - generate_resume
+hints:
+  preferred_steps:
+    - tool: list_jobs
+    - tool: generate_resume
+      depends_on: [step_1]
+  goal_type: optimize

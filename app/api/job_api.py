@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_current_user
-from app.db.crud import (
+from app.infrastructure.db.crud import (
     get_job_by_id,
     get_job_by_local_id,
     insert_job,
     list_jobs_for_user,
 )
-from app.schemas.job_schema import (
+from app.shared.schemas.job_schema import (
     JobCreateRequest,
     JobCreateResponse,
     JobListItem,

@@ -1,0 +1,22 @@
+# 岗位页面抓取 — 从外部 URL 抓取岗位 JD 内容
+name: "岗位页面抓取"
+description: "从外部 URL 抓取岗位详情页内容，提取公司、岗位名称、JD 描述等信息"
+keywords:
+  - "抓取"
+  - "采集"
+  - "爬取"
+  - "链接"
+  - "url"
+  - "页面"
+  - "岗位页面"
+  - "fetch"
+  - "提取"
+  - "解析页面"
+  - "打开链接"
+mode: workflow
+tools:
+  - fetch_job_page
+hints:
+  preferred_steps:
+    - tool: fetch_job_page
+  goal_type: prepare

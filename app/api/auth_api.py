@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user
-from app.core.security import DuplicateUserError, create_access_token, hash_password, verify_password
-from app.db.crud import create_user, get_user_by_username
-from app.schemas.user_schema import (
+from app.infrastructure.security import DuplicateUserError, create_access_token, hash_password, verify_password
+from app.infrastructure.db.crud import create_user, get_user_by_username
+from app.shared.schemas.user_schema import (
     CurrentUserResponse,
     LoginRequest,
     RegisterRequest,

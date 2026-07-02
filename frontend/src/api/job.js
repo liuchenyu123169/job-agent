@@ -12,5 +12,5 @@ export const jobApi = {
   },
   listJobs() {
     return safeGet("/api/job", undefined, "listJobs");
-  }
+  },
 };

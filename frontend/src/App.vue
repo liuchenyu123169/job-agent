@@ -88,13 +88,8 @@ const resumeRef = ref(null);
 const jobRef = ref(null);
 const taskRef = ref(null);
 
-const {
-  applyJobSelection,
-  applyResumeSelection,
-  currentJob,
-  currentResume,
-  resetSelections,
-} = useSelection(setMessage);
+const { applyJobSelection, applyResumeSelection, currentJob, currentResume, resetSelections } =
+  useSelection(setMessage);
 
 const {
   currentSessionId,
@@ -207,7 +202,17 @@ function switchView(key) {
   activeView.value = key;
 }
 
-provide("api", { adminApi, agentApi, authApi, copilotApi, evaluationApi, jobApi, knowledgeApi, resumeApi, taskApi });
+provide("api", {
+  adminApi,
+  agentApi,
+  authApi,
+  copilotApi,
+  evaluationApi,
+  jobApi,
+  knowledgeApi,
+  resumeApi,
+  taskApi,
+});
 provide("setMessage", setMessage);
 provide("loadingMap", loadingMap);
 provide("token", token);
@@ -240,7 +245,8 @@ onMounted(async () => {
   }
 
   if (!currentSessionId.value && sessions.value.length > 0) {
-    const recent = sessions.value.find((session) => session.status !== "ERROR") || sessions.value[0];
+    const recent =
+      sessions.value.find((session) => session.status !== "ERROR") || sessions.value[0];
     if (recent) {
       await selectSession(recent.id);
     }
@@ -261,7 +267,10 @@ onUnmounted(() => setUnauthorizedHandler(null));
         <aside class="sidebar">
           <div class="sidebar-brand">
             <div class="sidebar-logo">JA</div>
-            <div><strong>JobAgent</strong><p>AI Copilot</p></div>
+            <div>
+              <strong>JobAgent</strong>
+              <p>AI Copilot</p>
+            </div>
           </div>
 
           <nav class="sidebar-nav">
@@ -296,7 +305,8 @@ onUnmounted(() => setUnauthorizedHandler(null));
                     class="session-delete"
                     title="删除此对话"
                     @click="deleteSession(session.id, $event)"
-                  >✕</span>
+                    >✕</span
+                  >
                 </button>
               </div>
             </div>
@@ -316,7 +326,10 @@ onUnmounted(() => setUnauthorizedHandler(null));
             v-if="currentUser?.is_admin"
             class="sidebar-panel"
             style="cursor: pointer"
-            @click="adminMode = !adminMode; activeView = adminMode ? 'admin_dashboard' : 'chat'"
+            @click="
+              adminMode = !adminMode;
+              activeView = adminMode ? 'admin_dashboard' : 'chat';
+            "
           >
             <span style="font-size: 11px; color: #94a3b8">
               {{ adminMode ? "🧾 管理模式" : "💬 用户模式" }}
@@ -327,7 +340,9 @@ onUnmounted(() => setUnauthorizedHandler(null));
           </div>
 
           <div class="sidebar-footer">
-            <div class="user-chip-inline"><span>👤</span><strong>{{ currentUser?.username }}</strong></div>
+            <div class="user-chip-inline">
+              <span>👤</span><strong>{{ currentUser?.username }}</strong>
+            </div>
             <button class="btn btn-secondary btn-small" @click="logout">退出</button>
           </div>
         </aside>
@@ -352,8 +367,20 @@ onUnmounted(() => setUnauthorizedHandler(null));
     </template>
 
     <Transition name="toast-fade">
-      <div v-if="toastVisible && error" class="toast-overlay toast-overlay-error" @click="toastVisible = false">{{ error }}</div>
-      <div v-else-if="toastVisible && message" class="toast-overlay toast-overlay-info" @click="toastVisible = false">{{ message }}</div>
+      <div
+        v-if="toastVisible && error"
+        class="toast-overlay toast-overlay-error"
+        @click="toastVisible = false"
+      >
+        {{ error }}
+      </div>
+      <div
+        v-else-if="toastVisible && message"
+        class="toast-overlay toast-overlay-info"
+        @click="toastVisible = false"
+      >
+        {{ message }}
+      </div>
     </Transition>
   </div>
 </template>

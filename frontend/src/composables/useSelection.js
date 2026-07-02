@@ -21,7 +21,8 @@ export function useSelection(setMessage) {
     currentResume.id = resume.id ?? resume.resume_id ?? null;
     currentResume.localId = resume.local_resume_id ?? null;
     currentResume.fileName = resume.file_name || "";
-    currentResume.contentPreview = resume.content_preview || String(resume.content || "").slice(0, 200);
+    currentResume.contentPreview =
+      resume.content_preview || String(resume.content || "").slice(0, 200);
     currentResume.content = resume.content || "";
     setMessage(`已选中第 ${currentResume.localId} 份简历。`);
   }

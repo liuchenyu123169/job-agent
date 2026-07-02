@@ -1,0 +1,27 @@
+# 面试题生成
+name: "面试题生成"
+description: "基于简历和岗位生成四类面试题，支持RAG知识库增强"
+keywords:
+  - "面试题"
+  - "出题"
+  - "考题"
+  - "面试问题"
+  - "模拟面试"
+  - "出几道题"
+  - "生成题目"
+  - "提问"
+  - "考考我"
+  - "问答"
+  - "面试准备"
+  - "准备面试题"
+  - "技术面"
+  - "behaviour"
+  - "behavior"
+  - "八股文"
+mode: workflow
+tools:
+  - generate_interview_questions
+hints:
+  preferred_steps:
+    - tool: generate_interview_questions
+  goal_type: prepare

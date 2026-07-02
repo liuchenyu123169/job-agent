@@ -7,9 +7,9 @@
 
 import logging
 
-from app.workflows.generate import generate_resume_graph
-from app.workflows.state import make_initial_state
-from app.tools.base import ToolDefinition, ToolResult
+from app.application.workflows.generate import generate_resume_graph
+from app.application.workflows.state import make_initial_state
+from app.tools.base import InputRequirements, ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -56,9 +56,11 @@ async def generate_resume_execute(
         final_state = await generate_resume_graph.ainvoke(initial)
         if final_state.get("error_msg"):
             return ToolResult.fail(str(final_state["error_msg"]))
+        resume_text = final_state.get("generated_resume") or ""
         return ToolResult.ok({
             "task_id": final_state.get("task_id"),
-            "generated_resume": final_state.get("generated_resume") or "",
+            "generated_resume": resume_text,
+            "text": resume_text,
         })
     except Exception as exc:
         logger.error("[generate_resume] failed: %s", exc)
@@ -73,6 +75,7 @@ generate_resume_tool = ToolDefinition(
     execute=generate_resume_execute,
     keywords=["生成简历", "定制简历", "写简历", "简历生成", "做简历", "制作简历"],
     render_type="full_text",
+    input_requirements=InputRequirements(job_id=True),
 )
 
 tool_registry.register(generate_resume_tool)

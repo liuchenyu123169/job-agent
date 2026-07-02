@@ -2,12 +2,12 @@
 
 import logging
 
-from app.db.crud import (
+from app.infrastructure.db.crud import (
     get_task_by_id,
     list_jobs_for_user,
     list_resumes_for_user,
 )
-from app.tools.base import ToolDefinition, ToolResult
+from app.tools.base import InputRequirements, ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,16 @@ async def search_knowledge_execute(query: str, top_k: int = 5, **kwargs) -> Tool
     """在 RAG 知识库中检索相关知识片段。"""
     logger.info("[search_knowledge] query=%s top_k=%s", query, top_k)
     try:
-        from app.rag.rag_service import search_knowledge_cached
+        from app.ai.rag.rag_service import search_knowledge_cached
         items = await search_knowledge_cached(query=str(query), top_k=int(top_k))
-        return ToolResult.ok({"items": items, "count": len(items)})
+        text_lines = [f"# 知识检索: {query}", ""]
+        for i, item in enumerate(items, 1):
+            text_lines.append(f"**{i}.** {str(item)[:200]}")
+            text_lines.append("")
+        return ToolResult.ok({
+            "items": items, "count": len(items),
+            "text": "\n".join(text_lines),
+        })
     except Exception as exc:
         logger.error("[search_knowledge] failed: %s", exc)
         return ToolResult.fail(str(exc))
@@ -60,7 +67,13 @@ async def list_resumes_execute(user_id: int, **kwargs) -> ToolResult:
     logger.info("[list_resumes] user_id=%s", user_id)
     try:
         items = list_resumes_for_user(user_id=int(user_id))
-        return ToolResult.ok({"resumes": items, "count": len(items)})
+        text_lines = ["# 简历列表", ""]
+        for i, r in enumerate(items, 1):
+            text_lines.append(f"{i}. **{r.get('name', '未命名')}** (ID: {r.get('id', 'N/A')})")
+        return ToolResult.ok({
+            "resumes": items, "items": items, "count": len(items),
+            "text": "\n".join(text_lines),
+        })
     except Exception as exc:
         logger.error("[list_resumes] failed: %s", exc)
         return ToolResult.fail(str(exc))
@@ -81,7 +94,13 @@ async def list_jobs_execute(user_id: int, **kwargs) -> ToolResult:
     logger.info("[list_jobs] user_id=%s", user_id)
     try:
         items = list_jobs_for_user(user_id=int(user_id), limit=100)
-        return ToolResult.ok({"jobs": items, "count": len(items)})
+        text_lines = ["# 岗位列表", ""]
+        for i, j in enumerate(items, 1):
+            text_lines.append(f"{i}. **{j.get('job_name', '未命名')}** (ID: {j.get('id', 'N/A')})")
+        return ToolResult.ok({
+            "jobs": items, "items": items, "count": len(items),
+            "text": "\n".join(text_lines),
+        })
     except Exception as exc:
         logger.error("[list_jobs] failed: %s", exc)
         return ToolResult.fail(str(exc))
@@ -110,7 +129,10 @@ async def get_task_execute(task_id: int, user_id: int, **kwargs) -> ToolResult:
         task = get_task_by_id(int(task_id), user_id=int(user_id))
         if task is None:
             return ToolResult.fail(f"Task {task_id} not found")
-        return ToolResult.ok({"task": task})
+        return ToolResult.ok({
+            "task": task,
+            "text": f"# 任务详情 (ID: {task_id})\n\n{str(task)[:500]}",
+        })
     except Exception as exc:
         logger.error("[get_task] failed: %s", exc)
         return ToolResult.fail(str(exc))
@@ -127,6 +149,7 @@ search_knowledge_tool = ToolDefinition(
     execute=search_knowledge_execute,
     keywords=["检索", "搜索", "查", "知识点"],
     render_type="item_list",
+    input_requirements=InputRequirements(query=True),
 )
 
 list_resumes_tool = ToolDefinition(
@@ -136,6 +159,7 @@ list_resumes_tool = ToolDefinition(
     execute=list_resumes_execute,
     keywords=["简历列表", "我的简历"],
     render_type="item_list",
+    input_requirements=InputRequirements(),
 )
 
 list_jobs_tool = ToolDefinition(
@@ -145,6 +169,7 @@ list_jobs_tool = ToolDefinition(
     execute=list_jobs_execute,
     keywords=["岗位列表", "我的岗位"],
     render_type="item_list",
+    input_requirements=InputRequirements(),
 )
 
 get_task_tool = ToolDefinition(
@@ -154,6 +179,7 @@ get_task_tool = ToolDefinition(
     execute=get_task_execute,
     keywords=["任务", "查询任务", "历史"],
     render_type="generic",
+    input_requirements=InputRequirements(task_id=True),
 )
 
 tool_registry.register(search_knowledge_tool)

@@ -74,7 +74,10 @@ export function streamCopilot(payload, callbacks) {
         const text = await response.text();
         if (response.status === 404 && payload.session_id && !payload._retried) {
           if (text.includes("Session not found")) {
-            console.warn("[API] stale session_id=%s, auto-clearing and retrying", payload.session_id);
+            console.warn(
+              "[API] stale session_id=%s, auto-clearing and retrying",
+              payload.session_id
+            );
             localStorage.removeItem("currentSessionId");
             const retryPayload = { ...payload, session_id: undefined, _retried: true };
             streamCopilot(retryPayload, callbacks);

@@ -2,9 +2,9 @@
 
 import logging
 
-from app.workflows.optimize import optimize_resume_graph
-from app.workflows.state import make_initial_state
-from app.tools.base import ToolDefinition, ToolResult
+from app.application.workflows.optimize import optimize_resume_graph
+from app.application.workflows.state import make_initial_state
+from app.tools.base import InputRequirements, ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -39,9 +39,12 @@ async def optimize_resume_execute(
         final_state = await optimize_resume_graph.ainvoke(initial)
         if final_state.get("error_msg"):
             return ToolResult.fail(str(final_state["error_msg"]))
+        opt_text = final_state.get("optimization_text") or ""
         return ToolResult.ok({
             "task_id": final_state.get("task_id"),
-            "optimization": final_state.get("optimization_text") or {},
+            "optimization_text": opt_text,
+            "optimization": opt_text or {},
+            "text": opt_text,
         })
     except Exception as exc:
         logger.error("[optimize_resume] failed: %s", exc)
@@ -56,6 +59,7 @@ optimize_resume_tool = ToolDefinition(
     execute=optimize_resume_execute,
     keywords=["优化", "改进", "修改简历", "润色", "完善简历"],
     render_type="match_analysis",
+    input_requirements=InputRequirements(resume_id=True, job_id=True),
 )
 
 tool_registry.register(optimize_resume_tool)

@@ -16,13 +16,14 @@ from app.api.knowledge_api import router as knowledge_router
 from app.api.resume_api import router as resume_router
 from app.api.job_api import router as job_router
 from app.api.copilot_api import router as copilot_router
+from app.api.agent_run_api import router as agent_run_router
 from app.api.admin_api import router as admin_router
 from app.api.evaluation_api import router as evaluation_router
 from app.api.task_api import router as task_router
 from app.api.tasks_api import router as bg_task_router
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import check_jwt_secret
-from app.db.database import init_db
+from app.shared.config import check_jwt_secret
+from app.infrastructure.db.database import init_db
 
 app = FastAPI()
 
@@ -45,6 +46,7 @@ app.include_router(knowledge_router)
 app.include_router(resume_router)
 app.include_router(job_router)
 app.include_router(copilot_router)
+app.include_router(agent_run_router)
 app.include_router(evaluation_router)
 app.include_router(task_router)
 app.include_router(bg_task_router)
@@ -66,8 +68,8 @@ def on_startup() -> None:
     init_db()
     # 构建 Skill 参考嵌入向量（供意图识别 embedding fallback 使用）
     try:
-        from app.skills.intent_classifier import build_skill_embeddings
-        from app.skills.registry import skill_registry
+        from app.ai.skills.intent_classifier import build_skill_embeddings
+        from app.ai.skills.registry import skill_registry
         build_skill_embeddings(skill_registry.list_all())
     except Exception:
         logging.getLogger(__name__).warning("Skill embeddings 构建失败，intent embedding fallback 将不可用", exc_info=True)
@@ -81,5 +83,5 @@ def health(title="JobAgent API"):
 @app.get("/api/admin/metrics")
 def get_metrics():
     """返回内存中的可观测性指标摘要。"""
-    from app.observability.metrics import metrics
+    from app.shared.observability.metrics import metrics
     return metrics.summary()

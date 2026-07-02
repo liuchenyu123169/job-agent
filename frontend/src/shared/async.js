@@ -4,7 +4,11 @@
  */
 export async function withLoading(loadingMap, key, fn) {
   loadingMap[key] = true;
-  try { return await fn(); }
-  catch (err) { throw err; }
-  finally { loadingMap[key] = false; }
+  try {
+    return await fn();
+  } catch (err) {
+    throw err;
+  } finally {
+    loadingMap[key] = false;
+  }
 }

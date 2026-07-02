@@ -10,10 +10,10 @@ export const knowledgeApi = {
       {
         params: {
           query,
-          top_k: topK
-        }
+          top_k: topK,
+        },
       },
       "searchKnowledge"
     );
-  }
+  },
 };

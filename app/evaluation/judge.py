@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.core.llm import invoke_llm
+from app.ai.llm import invoke_llm
 
 logger = logging.getLogger(__name__)
 

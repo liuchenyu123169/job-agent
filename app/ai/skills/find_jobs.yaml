@@ -1,0 +1,23 @@
+# 岗位推荐 — 基于简历对所有岗位打分，推荐最匹配的岗位
+# 路由: mode=closed_loop → orchestrator（Planner 动态决定工具链）
+name: "岗位推荐"
+description: "基于简历对所有岗位打分，推荐最匹配的岗位"
+keywords:
+  - "推荐岗位"
+  - "岗位推荐"
+  - "找工作"
+  - "适合我的岗位"
+  - "有什么岗位"
+  - "推荐工作"
+  - "推荐几个"
+  - "哪些岗位适合"
+  - "帮我找"
+  - "海投"
+  - "投哪个"
+mode: closed_loop
+hints:
+  preferred_steps:
+    - tool: list_resumes
+    - tool: recommend_jobs
+      depends_on: [step_1]
+  goal_type: compare

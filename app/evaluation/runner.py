@@ -14,13 +14,13 @@ from typing import Any
 
 import yaml
 
-from app.workflows.analyze import analyze_graph
-from app.workflows.generate import generate_resume_graph
-from app.workflows.interview import interview_graph
-from app.workflows.optimize import optimize_resume_graph
-from app.workflows.state import make_initial_state
-from app.db.crud import insert_job, insert_resume
-from app.db.database import execute, get_conn
+from app.application.workflows.analyze import analyze_graph
+from app.application.workflows.generate import generate_resume_graph
+from app.application.workflows.interview import interview_graph
+from app.application.workflows.optimize import optimize_resume_graph
+from app.application.workflows.state import make_initial_state
+from app.infrastructure.db.crud import insert_job, insert_resume
+from app.infrastructure.db.database import execute, get_conn
 from app.evaluation.judge import CaseScore, StableJudgeResult, score_case
 
 logger = logging.getLogger(__name__)

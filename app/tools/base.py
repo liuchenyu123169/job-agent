@@ -3,6 +3,19 @@ from typing import Any, Awaitable, Callable
 
 
 @dataclass
+class InputRequirements:
+    """声明工具执行需要什么上下文输入。
+
+    Precheck 阶段会遍历 plan_steps，收集所有步骤需要的输入，
+    只在需要的输入缺失时才 block。纯查询类工具全部为 False。
+    """
+    resume_id: bool = False
+    job_id: bool = False
+    task_id: bool = False
+    query: bool = False  # search_knowledge 需要
+
+
+@dataclass
 class ToolResult:
     """Unified result wrapper for all tool executions."""
     success: bool
@@ -27,6 +40,7 @@ class ToolDefinition:
     execute: Callable[..., Awaitable[ToolResult]] = field(repr=False)
     keywords: list[str] = field(default_factory=list)  # 前端意图匹配用
     render_type: str = "generic"  # 前端渲染类型: "match_analysis" | "questions" | "scored_list" | "full_text" | "item_list" | "generic"
+    input_requirements: InputRequirements = field(default_factory=InputRequirements)  # Precheck 用
 
     def to_openai_function(self) -> dict[str, Any]:
         """Return the tool definition in OpenAI function-calling format."""

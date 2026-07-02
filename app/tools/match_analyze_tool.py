@@ -2,9 +2,9 @@
 
 import logging
 
-from app.workflows.analyze import analyze_graph
-from app.workflows.state import make_initial_state
-from app.tools.base import ToolDefinition, ToolResult
+from app.application.workflows.analyze import analyze_graph
+from app.application.workflows.state import make_initial_state
+from app.tools.base import InputRequirements, ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -39,9 +39,19 @@ async def match_analyze_execute(
         final_state = await analyze_graph.ainvoke(initial)
         if final_state.get("error_msg"):
             return ToolResult.fail(str(final_state["error_msg"]))
+        analysis_dict = final_state.get("analysis") or {}
+        analysis_text = final_state.get("analysis_text") or analysis_dict.get("text") or ""
+        logger.info(
+            "[match_analyze] state keys=%s analysis_text_len=%s analysis_dict_keys=%s",
+            [k for k in final_state.keys() if not k.startswith("_")],
+            len(analysis_text),
+            list(analysis_dict.keys()) if analysis_dict else "empty",
+        )
         return ToolResult.ok({
             "task_id": final_state.get("task_id"),
-            "analysis": final_state.get("analysis") or {},
+            "analysis": analysis_dict,
+            "analysis_text": analysis_text,
+            "text": analysis_text,
         })
     except Exception as exc:
         logger.error("[match_analyze] failed: %s", exc)
@@ -56,6 +66,7 @@ match_analyze_tool = ToolDefinition(
     execute=match_analyze_execute,
     keywords=["匹配", "分析", "评分", "对比", "合适", "适合"],
     render_type="match_analysis",
+    input_requirements=InputRequirements(resume_id=True, job_id=True),
 )
 
 tool_registry.register(match_analyze_tool)

@@ -1,0 +1,24 @@
+# 匹配分析 — 只看匹配度
+name: "匹配分析"
+description: "分析简历与岗位的匹配度，给出分数和建议"
+keywords:
+  - "匹配度"
+  - "匹配分析"
+  - "岗位匹配"
+  - "简历匹配"
+  - "差距分析"
+  - "对比岗位"
+  - "打分"
+  - "匹配程度"
+  - "合不合适"
+  - "胜任"
+  - "差距在哪"
+  - "差在哪里"
+  - "优势劣势"
+mode: workflow
+tools:
+  - match_analyze
+hints:
+  preferred_steps:
+    - tool: match_analyze
+  goal_type: prepare

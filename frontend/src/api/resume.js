@@ -9,8 +9,8 @@ export const resumeApi = {
       formData,
       {
         headers: {
-          "Content-Type": "multipart/form-data"
-        }
+          "Content-Type": "multipart/form-data",
+        },
       },
       "uploadResume"
     );
@@ -23,5 +23,5 @@ export const resumeApi = {
   },
   listResumes() {
     return safeGet("/api/resume", undefined, "listResumes");
-  }
+  },
 };

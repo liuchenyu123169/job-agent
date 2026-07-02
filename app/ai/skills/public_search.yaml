@@ -1,0 +1,27 @@
+# 公开搜索 — 在互联网上搜索公开信息
+name: "公开搜索"
+description: "在互联网上搜索公开信息，返回相关网页的标题、URL 和摘要"
+keywords:
+  - "搜索"
+  - "查一下"
+  - "查"
+  - "检索"
+  - "公开信息"
+  - "网上"
+  - "互联网"
+  - "百度"
+  - "谷歌"
+  - "web"
+  - "search"
+  - "查公开"
+  - "搜一下"
+  - "上网查"
+  - "帮我查"
+  - "查查"
+mode: workflow
+tools:
+  - public_search
+hints:
+  preferred_steps:
+    - tool: public_search
+  goal_type: prepare

@@ -13,8 +13,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_current_user
-from app.infra.tasks.client import enqueue, get_progress, get_result
-from app.infra.tasks.models import TaskStatus
+from app.infrastructure.tasks.client import enqueue, get_progress, get_result
+from app.infrastructure.tasks.models import TaskStatus
 
 logger = logging.getLogger(__name__)
 

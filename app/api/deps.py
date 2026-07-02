@@ -3,8 +3,8 @@ from typing import Any
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-from app.core.security import decode_access_token
-from app.db.crud import get_user_by_id
+from app.infrastructure.security import decode_access_token
+from app.infrastructure.db.crud import get_user_by_id
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")

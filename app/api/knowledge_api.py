@@ -3,8 +3,8 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.api.deps import get_admin_user
-from app.rag.rag_service import build_knowledge_base, search_knowledge
-from app.schemas.knowledge_schema import (
+from app.ai.rag.rag_service import build_knowledge_base, search_knowledge
+from app.shared.schemas.knowledge_schema import (
     KnowledgeBuildResponse,
     KnowledgeSearchItem,
     KnowledgeSearchResponse,

@@ -40,7 +40,10 @@ async function runEvaluation() {
 </script>
 
 <template>
-  <div class="eval-panel-inline section-top" style="padding: 24px; max-width: 600px; margin: 0 auto">
+  <div
+    class="eval-panel-inline section-top"
+    style="padding: 24px; max-width: 600px; margin: 0 auto"
+  >
     <h4>自动化测评</h4>
     <p>选择 workflow 并运行测评，结果会保存到 `evaluation_results/` 目录。</p>
     <div class="form-stack">
@@ -48,7 +51,13 @@ async function runEvaluation() {
         <span>Workflow</span>
         <select
           v-model="evalWorkflow"
-          style="width: 100%; height: 40px; border-radius: 10px; padding: 0 12px; border: 1px solid #cbd5e1"
+          style="
+            width: 100%;
+            height: 40px;
+            border-radius: 10px;
+            padding: 0 12px;
+            border: 1px solid #cbd5e1;
+          "
         >
           <option v-for="workflow in evalWorkflows" :key="workflow" :value="workflow">
             {{ workflow }}
@@ -66,9 +75,18 @@ async function runEvaluation() {
     </div>
     <div
       v-if="evalResult"
-      style="margin-top: 16px; background: #f8fafc; border-radius: 12px; padding: 16px; max-height: 400px; overflow: auto"
+      style="
+        margin-top: 16px;
+        background: #f8fafc;
+        border-radius: 12px;
+        padding: 16px;
+        max-height: 400px;
+        overflow: auto;
+      "
     >
-      <pre style="font-size: 12px; white-space: pre-wrap; margin: 0">{{ JSON.stringify(evalResult, null, 2) }}</pre>
+      <pre style="font-size: 12px; white-space: pre-wrap; margin: 0">{{
+        JSON.stringify(evalResult, null, 2)
+      }}</pre>
     </div>
   </div>
 </template>

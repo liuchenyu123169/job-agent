@@ -2,9 +2,9 @@
 
 import logging
 
-from app.workflows.interview import interview_graph
-from app.workflows.state import make_initial_state
-from app.tools.base import ToolDefinition, ToolResult
+from app.application.workflows.interview import interview_graph
+from app.application.workflows.state import make_initial_state
+from app.tools.base import InputRequirements, ToolDefinition, ToolResult
 from app.tools.registry import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -48,9 +48,12 @@ async def interview_questions_execute(
         final_state = await interview_graph.ainvoke(initial)
         if final_state.get("error_msg"):
             return ToolResult.fail(str(final_state["error_msg"]))
+        q_text = final_state.get("questions_text") or ""
         return ToolResult.ok({
             "task_id": final_state.get("task_id"),
-            "questions": final_state.get("questions_text") or {},
+            "questions_text": q_text,
+            "questions": q_text or {},
+            "text": q_text,
         })
     except Exception as exc:
         logger.error("[generate_interview_questions] failed: %s", exc)
@@ -69,6 +72,7 @@ interview_questions_tool = ToolDefinition(
     execute=interview_questions_execute,
     keywords=["面试", "题目", "考题", "问答", "提问"],
     render_type="questions",
+    input_requirements=InputRequirements(resume_id=True, job_id=True),
 )
 
 tool_registry.register(interview_questions_tool)

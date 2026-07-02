@@ -13,10 +13,10 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.domains.job.matcher import recommend_jobs_for_resume
+from app.domain.job.matcher import recommend_jobs_for_resume
 from app.api.deps import get_current_user
-from app.db.crud import resolve_resume_for_user
-from app.schemas.agent_schema import (
+from app.infrastructure.db.crud import resolve_resume_for_user
+from app.shared.schemas.agent_schema import (
     RecommendJobsRequest,
     RecommendJobsResponse,
 )

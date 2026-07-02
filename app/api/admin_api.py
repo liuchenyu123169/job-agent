@@ -6,8 +6,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_admin_user
-from app.db.crud import get_user_by_id
-from app.db.database import execute, execute_sql, fetch_all, fetch_one, get_conn
+from app.infrastructure.db.crud import get_user_by_id
+from app.infrastructure.db.database import execute, execute_sql, fetch_all, fetch_one, get_conn
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 

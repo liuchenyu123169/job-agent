@@ -10,9 +10,9 @@ import uuid
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.observability.logger import StructuredLogger
-from app.observability.metrics import metrics
-from app.observability.tracer import set_request_context
+from app.shared.observability.logger import StructuredLogger
+from app.shared.observability.metrics import metrics
+from app.shared.observability.tracer import set_request_context
 
 
 class RequestIdMiddleware:

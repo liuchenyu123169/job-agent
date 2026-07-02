@@ -9,5 +9,5 @@ export const authApi = {
   },
   getCurrentUser() {
     return safeGet("/api/auth/me", undefined, "getCurrentUser");
-  }
+  },
 };

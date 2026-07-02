@@ -1,8 +1,9 @@
 """Copilot API — SSE 流式端点，实时推送 Pipeline 执行进度。
 
-两种执行路径（后端 Skill 匹配自动选择）：
-- 意图明确 (Skill 命中) → 直接跑子 Agent pipeline，跳过 Coordinator LLM
-- 意图模糊 (Skill 未命中) → Coordinator LLM 推理委派
+路由规则 (Phase 2):
+- classify_intent() 分类用户意图 → IntentResult
+- fixed intent → _direct_tools（固定工具链，零 LLM 路由）
+- open intent / 无匹配 → ClosedLoopOrchestrator.run_stream()
 
 多轮对话：通过 session_id 续接已有会话，自动加载历史消息。
 """
@@ -11,8 +12,11 @@ import asyncio
 import json
 import logging
 import queue
+import re
 import time
 from typing import AsyncGenerator
+
+_URL_RE = re.compile(r"https?://[^\s,，。；;]+")
 
 _REPORT_MARKER = "__COPILOT_REPORT__"
 
@@ -20,42 +24,29 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents import (
-    create_coordinator_graph,
-    interview_agent,
-    resume_agent,
-    search_agent,
-)
 from app.api.deps import get_current_user
-from app.observability import metrics
-from app.api.stream_utils import error_event, final_event, sse_event, step_complete_event, step_start_event, step_token_event
-from app.copilot.conversation import conversation_manager
-from app.copilot.state import PipelineContext, PipelineState
-from app.copilot.summarizer import summarize_result
-from app.db.crud import (
+from app.shared.observability import metrics
+from app.shared.observability.route_tracer import trace_route
+from app.shared.stream_utils import error_event, final_event, sse_event, step_complete_event, step_start_event, step_token_event
+from app.application.copilot.conversation import conversation_manager
+from app.shared.state import PipelineContext, PipelineState
+from app.application.copilot.summarizer import summarize_result
+from app.application.orchestrator import ClosedLoopOrchestrator
+from app.infrastructure.db.crud import (
     create_copilot_session,
     get_conversation_messages,
     get_copilot_session,
     list_copilot_sessions,
     update_copilot_session,
 )
-from app.schemas.agent_schema import CopilotRunRequest
-from app.skills.registry import skill_registry
+from app.shared.schemas.agent_schema import CopilotRunRequest
+from app.ai.skills.intent import classify_intent
+from app.ai.skills.registry import skill_registry
 from app.tools import tool_registry
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/copilot", tags=["Copilot"])
-
-# 子 Agent 名称 → 实例映射
-_AGENT_MAP = {
-    "resume_agent": resume_agent,
-    "interview_agent": interview_agent,
-    "search_agent": search_agent,
-}
-
-# Coordinator graph 单例（意图模糊时的 fallback）
-_COORDINATOR_GRAPH = create_coordinator_graph([resume_agent, interview_agent, search_agent])
 
 
 @router.post("/run")
@@ -65,18 +56,22 @@ async def copilot_run(
 ):
     """运行 Copilot Pipeline，通过 SSE 流式返回执行进度和结果。
 
-    后端根据 Skill 匹配自动选择路径：
-    - 命中 → 直接跑子 Agent pipeline（零路由延迟）
-    - 未命中 → Coordinator LLM 推理委派
-
-    多轮对话：传 session_id 续接已有会话，自动加载历史消息。
+    路由规则:
+    - Skill 命中 + mode=workflow → _direct_tools（固定工具链，零 LLM 路由）
+    - 其余全部 → ClosedLoopOrchestrator.run_stream（开放任务，plan→execute→verify）
     """
     user_id = int(current_user["id"])
+
+    # ── URL 提取：从 goal 中识别链接，写入 external_urls ──
+    external_urls = _URL_RE.findall(payload.goal or "")
+
     context = PipelineContext(
         resume_id=payload.resume_id,
         job_id=payload.job_id,
         personal_info=payload.personal_info,
         goal=payload.goal,
+        extra_context_text=payload.extra_context or "",
+        external_urls=external_urls,
     )
 
     # ── 会话管理：加载历史或创建新会话 ──
@@ -85,7 +80,6 @@ async def copilot_run(
     if payload.session_id:
         session = get_copilot_session(payload.session_id, user_id=user_id)
         if session is None:
-            # 会话已被删除或数据库重建 → 静默降级为新建，前端在响应头 X-Session-Id 拿到新 ID
             logger.warning(
                 "[Copilot] stale session_id=%s for user=%d, auto-creating new session",
                 payload.session_id, user_id,
@@ -97,8 +91,6 @@ async def copilot_run(
             session_id = payload.session_id
             context.session_id = session_id
             context.messages_summary = session.get("messages_summary")
-
-            # 加载历史消息（Coordinator 路径使用）
             history_messages = conversation_manager.load_history(session_id, user_id, system_prompt="")
             logger.info("[Copilot] resume session=%d, %d history messages", session_id, len(history_messages))
     else:
@@ -106,24 +98,39 @@ async def copilot_run(
         session_id = int(session["id"])
         context.session_id = session_id
 
-    # ── 后端 Skill 匹配：决定走哪条路径 ──
+    # ── 路由决策 (Phase 2: classify_intent) ──
+    _t0 = time.monotonic()
     skills = skill_registry.match_all(payload.goal)
+    intent = classify_intent(payload.goal, skills)
 
-    if skills:
-        sub_agent_names = _merge_agents(skills)
-        tools = _merge_tools(skills)
-        logger.info("[Copilot] skills=%s agents=%s tools=%s",
-                     [s.name for s in skills], sub_agent_names, tools)
+    # 结构化路由追踪日志（回答"为什么走这条路"）
+    trace_route(
+        session_id=session_id,
+        user_id=user_id,
+        goal=payload.goal,
+        intent_result=intent,
+        duration_ms=(time.monotonic() - _t0) * 1000,
+    )
 
-        if sub_agent_names:
-            generator = _direct_agents(context, user_id, session_id, sub_agent_names)
-        elif tools:
-            generator = _direct_tools(context, user_id, session_id, tools)
-        else:
-            generator = _coordinator_generator(context, user_id, session_id, payload.goal, history_messages)
+    if intent.route == "direct_tools":
+        logger.info(
+            "[Copilot:route] fixed intent=%s source=%s skills=%s tools=%s",
+            intent.intent_type, intent.decision_source,
+            intent.matched_skills, intent.tools,
+        )
+        generator = _direct_tools(context, user_id, session_id, intent.tools)
     else:
-        logger.info("[Copilot] no skill matched, fallback to coordinator")
-        generator = _coordinator_generator(context, user_id, session_id, payload.goal, history_messages)
+        logger.info(
+            "[Copilot:route] open intent=%s source=%s skills=%s rationale=%s",
+            intent.intent_type, intent.decision_source,
+            intent.matched_skills, intent.rationale,
+        )
+        orchestrator = ClosedLoopOrchestrator()
+        generator = orchestrator.run_stream(
+            payload.goal, context, user_id,
+            skill_hints=intent.skill_hints,
+            intent_type=intent.intent_type,
+        )
 
     return StreamingResponse(
         generator,
@@ -135,30 +142,6 @@ async def copilot_run(
             "X-Session-Id": str(session_id),
         },
     )
-
-
-def _merge_agents(skills) -> list[str]:
-    """从 Skill 列表中提取 sub_agents，去重保序。"""
-    seen = set()
-    result = []
-    for s in skills:
-        for name in (s.sub_agents or []):
-            if name not in seen:
-                seen.add(name)
-                result.append(name)
-    return result
-
-
-def _merge_tools(skills) -> list[str]:
-    """从 Skill 列表中提取 tools（fast 模式的工具名），去重保序。"""
-    seen = set()
-    result = []
-    for s in skills:
-        for name in (s.tools or []):
-            if name not in seen:
-                seen.add(name)
-                result.append(name)
-    return result
 
 
 def _save_report(session_id, user_id, report, preexisting_messages=None, goal=None):
@@ -197,135 +180,74 @@ def _summarize_node_state(node_name: str, state: dict) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 路径 1: 意图明确 → 直接跑子 Agent，零 LLM 路由
-# ═══════════════════════════════════════════════════════════════
+# 路径 1b: 意图明确但 Skill 配置的是 tools 而非 sub_agents
+# ── 工具名 → 特殊参数注入规则 ──
+# 基础参数 (resume_id / job_id / user_id / personal_info) 总是传入。
+# 下面定义哪些工具需要从 PipelineContext 中额外提取特定参数。
+_TOOL_PARAM_INJECTION: dict[str, dict] = {
+    "public_search":     {"query": "goal"},       # context.goal → query
+    "fetch_job_page":    {"url": "external_urls[0]"},  # context.external_urls[0] → url
+    "search_knowledge":  {"query": "goal"},
+}
 
-async def _direct_agents(
+
+def _build_tool_params(
+    tool_name: str,
+    tool: "ToolDefinition",
     context: PipelineContext,
     user_id: int,
-    session_id: int,
-    agent_names: list[str],
-) -> AsyncGenerator[str, None]:
-    """直接按顺序执行子 Agent，跳过 Coordinator LLM。
+) -> tuple[dict, str | None]:
+    """构建工具执行参数。返回 (params, error_msg)。
 
-    每个子 Agent 内部运行自己的 pipeline。适合意图明确的场景。
+    优先级链:
+    1. 固定基础: user_id, resume_id, job_id, personal_info
+    2. 工具名显式映射 (query / url 等)
+    3. Schema 默认值补全 (top_k, enable_rag 等)
+    4. 缺参检查: schema required 字段未满足 → 返回 error_msg
     """
-    try:
-        for name in agent_names:
-            t_agent = time.monotonic()
-            agent = _AGENT_MAP.get(name)
-            if agent is None:
-                yield error_event(name, f"未知的子 Agent: {name}")
-                metrics.record_tool_error(name)
-                continue
+    rid = context.resume_id
+    jid = context.job_id
 
-            yield step_start_event(name, {
-                "resume_id": context.resume_id,
-                "job_id": context.job_id,
-            })
-            logger.info("[Copilot:direct] streaming %s", name)
+    params: dict = {
+        "user_id": user_id,
+        "resume_id": int(rid or 0),
+        "job_id": int(jid or 0),
+        "personal_info": context.personal_info or "",
+    }
 
-            # 双队列：progress（节点进度）+ token（LLM 逐字输出）
-            progress_q: queue.Queue = queue.Queue()
-            token_q: queue.Queue = queue.Queue()
+    # ── 工具名显式映射 ──
+    injection = _TOOL_PARAM_INJECTION.get(tool_name, {})
+    for param_name, context_attr in injection.items():
+        if context_attr == "goal":
+            params[param_name] = context.goal or ""
+        elif context_attr == "external_urls[0]":
+            urls = context.external_urls
+            params[param_name] = urls[0] if urls else ""
 
-            def on_step(node_name: str, duration_ms: float) -> None:
-                progress_q.put(("step", node_name, duration_ms))
+    # ── Schema 默认值补全 ──
+    schema_props = tool.parameters.get("properties", {})
+    for prop_name, prop_schema in schema_props.items():
+        if prop_name not in params and "default" in prop_schema:
+            params[prop_name] = prop_schema["default"]
 
-            def on_token(t: str) -> None:
-                token_q.put(t)
+    # ── 缺参检查 ──
+    required = tool.parameters.get("required", [])
+    for req_param in required:
+        val = params.get(req_param)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            return {}, f"缺少必要参数: {req_param} (工具 {tool_name} 需要此参数，但上下文未提供)"
 
-            task = asyncio.create_task(agent.run_stream_async(
-                goal=f"执行 {name}",
-                resume_id=int(context.resume_id or 0),
-                job_id=int(context.job_id or 0),
-                user_id=user_id,
-                on_step=on_step,
-                on_token=on_token,
-            ))
+    # 预检查 InputRequirements
+    missing = []
+    if tool.input_requirements.resume_id and not rid:
+        missing.append("resume")
+    if tool.input_requirements.job_id and not jid:
+        missing.append("job")
+    if missing:
+        return {}, f"缺少必要输入: {', '.join(missing)}，请先在左侧面板中选择"
 
-            loop = asyncio.get_running_loop()
+    return params, None
 
-            # 合并排水：一次取空两队列，批量发 token 减少 SSE 事件量
-            def _drain_all() -> tuple[list[tuple[str, str, float]], list[str]]:
-                steps: list[tuple[str, str, float]] = []
-                tokens: list[str] = []
-                while True:
-                    try:
-                        steps.append(progress_q.get_nowait())
-                    except queue.Empty:
-                        break
-                while True:
-                    try:
-                        tokens.append(token_q.get_nowait())
-                    except queue.Empty:
-                        break
-                return steps, tokens
-
-            while not task.done():
-                steps, tokens = await loop.run_in_executor(None, _drain_all)
-                # 发进度事件
-                for _, node_name, duration_ms in steps:
-                    yield sse_event("step_progress", {
-                        "agent": name,
-                        "node": node_name,
-                        "duration_ms": duration_ms,
-                        "state_summary": _summarize_node_state(node_name, {}),
-                    })
-                # 发 token 事件（批量合并成一段）
-                if tokens:
-                    yield step_token_event(name, "".join(tokens))
-
-                # 空队列时短暂 sleep，避免忙等
-                if not steps and not tokens:
-                    await asyncio.sleep(0.05)
-
-            result = await task
-
-            # task 完成后清空残留
-            steps, tokens = await loop.run_in_executor(None, _drain_all)
-            for _, node_name, duration_ms in steps:
-                yield sse_event("step_progress", {
-                    "agent": name,
-                    "node": node_name,
-                    "duration_ms": duration_ms,
-                    "state_summary": _summarize_node_state(node_name, {}),
-                })
-            if tokens:
-                yield step_token_event(name, "".join(tokens))
-
-            if result["success"] and result.get("data"):
-                context.record_result(name, result["data"])
-                yield step_complete_event(name, result["data"])
-            else:
-                yield error_event(name, result.get("error") or "unknown error")
-                metrics.record_tool_error(name)
-
-            metrics.record_sse_chain(name, (time.monotonic() - t_agent) * 1000)
-
-        report = summarize_result(context)
-        report["session_id"] = session_id
-        _save_report(session_id, user_id, report, goal=context.goal)
-        yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
-
-        update_copilot_session(
-            session_id=session_id, status="COMPLETED",
-            context_json=context.to_summary(),
-            task_ids_json=report["task_ids"], summary_json=report, user_id=user_id,
-        )
-
-    except Exception as exc:
-        logger.exception("[Copilot:direct] failed")
-        update_copilot_session(
-            session_id=session_id, status="ERROR",
-            summary_json={"error": str(exc)}, user_id=user_id,
-        )
-        yield error_event("pipeline", str(exc))
-
-
-# ═══════════════════════════════════════════════════════════════
-# 路径 1b: 意图明确但 Skill 配置的是 tools 而非 sub_agents
-# ═══════════════════════════════════════════════════════════════
 
 async def _direct_tools(
     context: PipelineContext,
@@ -333,134 +255,133 @@ async def _direct_tools(
     session_id: int,
     tools: list[str],
 ) -> AsyncGenerator[str, None]:
-    """直接按 tools 列表顺序执行原子工具（兼容 fast 模式）。"""
+    """直接按 tools 列表顺序执行原子工具（兼容 fast 模式）。
+
+    支持 LLM token 级流式推送：通过 ContextVar 捕获工具内部 LLM 调用产生的 token。
+    """
+    from app.application.workflows.common import _token_callback
+
+    success_count = 0
+    failed_tools: list[str] = []
+
     try:
         for tool_name in tools:
             tool = tool_registry.get(tool_name)
             if tool is None:
                 logger.warning("[Copilot:tools] unknown tool '%s' in skill config", tool_name)
                 yield error_event(tool_name, f"未知的工具: {tool_name}")
+                failed_tools.append(tool_name)
                 continue
 
-            rid = context.resume_id
-            jid = context.job_id
-            yield step_start_event(tool_name, {"resume_id": rid, "job_id": jid})
-            logger.info("[Copilot:tools] executing %s", tool_name)
+            # ── 构建参数 ──
+            params, param_err = _build_tool_params(tool_name, tool, context, user_id)
+            if param_err:
+                logger.warning("[Copilot:tools] %s param error: %s", tool_name, param_err)
+                yield error_event(tool_name, param_err)
+                metrics.record_tool_error(tool_name)
+                failed_tools.append(tool_name)
+                continue
 
-            result = await tool.execute(
-                resume_id=int(rid or 0),
-                job_id=int(jid or 0),
-                user_id=user_id,
-                personal_info=context.personal_info or "",
-            )
+            yield step_start_event(tool_name, {
+                "resume_id": context.resume_id,
+                "job_id": context.job_id,
+            })
+            logger.info("[Copilot:tools] executing %s params=%s", tool_name,
+                         {k: v for k, v in params.items() if k not in ("personal_info",)})
+
+            # ── Token 级流式推送 ──
+            token_q: asyncio.Queue = asyncio.Queue(maxsize=256)
+
+            def _on_token(t: str) -> None:
+                try:
+                    token_q.put_nowait(t)
+                except asyncio.QueueFull:
+                    pass
+
+            token_token = _token_callback.set(_on_token)
+            try:
+                exec_task = asyncio.create_task(tool.execute(**params))
+
+                # 在工具执行期间持续排空 token 队列
+                while not exec_task.done():
+                    tokens: list[str] = []
+                    while True:
+                        try:
+                            tokens.append(token_q.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+                    if tokens:
+                        yield step_token_event(tool_name, "".join(tokens))
+                    else:
+                        await asyncio.sleep(0.03)
+
+                # 排空残留 token
+                tail: list[str] = []
+                while True:
+                    try:
+                        tail.append(token_q.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+                if tail:
+                    yield step_token_event(tool_name, "".join(tail))
+
+                result = await exec_task
+            finally:
+                _token_callback.reset(token_token)
+
             if result.success and result.data:
                 context.record_result(tool_name, result.data)
                 yield step_complete_event(tool_name, result.data)
+                success_count += 1
             else:
-                yield error_event(tool_name, result.error or "unknown error")
+                err_msg = result.error or "unknown error"
+                yield error_event(tool_name, err_msg)
+                metrics.record_tool_error(tool_name)
+                failed_tools.append(tool_name)
+
+        # ── 完成态判断 ──
+        total = len(tools)
+        if success_count == total:
+            status = "COMPLETED"
+        elif success_count > 0:
+            status = "PARTIAL"
+        else:
+            status = "ERROR"
 
         report = summarize_result(context)
         report["session_id"] = session_id
+        report["failed_tools"] = list(failed_tools)
+
+        # 部分失败时在 summary 中明确标注
+        if failed_tools and success_count > 0:
+            failed_note = f"\n\n> ⚠️ 部分步骤失败: {', '.join(failed_tools)}"
+            report["summary"] = (report.get("summary") or "") + failed_note
+
         _save_report(session_id, user_id, report, goal=context.goal)
-        yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
+        yield final_event(
+            summary=report["summary"],
+            task_ids=report["task_ids"],
+            session_id=session_id,
+            failed_tools=list(failed_tools) if failed_tools else None,
+            status=status,
+        )
 
         update_copilot_session(
-            session_id=session_id, status="COMPLETED",
+            session_id=session_id,
+            status=status,
             context_json=context.to_summary(),
-            task_ids_json=report["task_ids"], summary_json=report, user_id=user_id,
+            task_ids_json=report["task_ids"],
+            summary_json=report,
+            user_id=user_id,
         )
 
     except Exception as exc:
-        logger.exception("[Copilot:tools] failed")
+        logger.exception("[Copilot:tools] fatal exception")
         update_copilot_session(
             session_id=session_id, status="ERROR",
             summary_json={"error": str(exc)}, user_id=user_id,
         )
         yield error_event("pipeline", str(exc))
-
-
-# ═══════════════════════════════════════════════════════════════
-# 路径 2: 意图模糊 → Coordinator LLM 推理委派
-# ═══════════════════════════════════════════════════════════════
-
-async def _coordinator_generator(
-    context: PipelineContext,
-    user_id: int,
-    session_id: int,
-    goal: str,
-    history_messages: list | None = None,
-) -> AsyncGenerator[str, None]:
-    """Coordinator SSE 生成器：委派子 Agent，流式推送进度。
-
-    支持多轮对话：传入 history_messages 则从历史消息恢复上下文。
-    """
-    current_tool: str | None = None
-    final_messages: list = []
-
-    # 构建初始消息列表：历史消息 + 当前用户消息
-    if history_messages:
-        messages = list(history_messages)
-        messages.append(HumanMessage(content=goal))
-        # 管理上下文窗口
-        messages, summary = conversation_manager.manage_window(messages)
-        if summary:
-            context.messages_summary = summary
-    else:
-        messages = [HumanMessage(content=goal)]
-
-    initial_state: PipelineState = {
-        "messages": messages,
-        "context": context,
-        "user_id": user_id,
-    }
-
-    try:
-        async for chunk in _COORDINATOR_GRAPH.astream(
-            initial_state,
-            config={"recursion_limit": 50},
-        ):
-            for node_name, node_state in chunk.items():
-                if node_name == "agent":
-                    final_messages = node_state.get("messages", [])
-                    if final_messages:
-                        last_msg = final_messages[-1]
-                        if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-                            for tc in last_msg.tool_calls:
-                                current_tool = tc.get("name", "")
-                                yield step_start_event(current_tool, tc.get("args", {}))
-
-                elif node_name == "tools":
-                    ctx: PipelineContext = node_state.get("context", context)
-                    if current_tool and current_tool in ctx.tool_results:
-                        yield step_complete_event(current_tool, ctx.tool_results.get(current_tool, {}))
-
-        final_text = ""
-        for msg in reversed(final_messages):
-            if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
-                final_text = str(msg.content or "")
-                break
-
-        # 保存本轮消息到 DB（ReAct 对话 + 结构化报告）
-        report = summarize_result(context, final_message=final_text)
-        report["session_id"] = session_id
-        _save_report(session_id, user_id, report, preexisting_messages=final_messages)
-        if context.messages_summary:
-            conversation_manager.save_summary(session_id, user_id, context.messages_summary)
-        yield final_event(summary=report["summary"], task_ids=report["task_ids"], session_id=session_id)
-
-        update_copilot_session(
-            session_id=session_id, status="COMPLETED",
-            context_json=context.to_summary(),
-            task_ids_json=report["task_ids"], summary_json=report, user_id=user_id,
-        )
-
-    except Exception as exc:
-        logger.exception("[Copilot:coordinator] failed")
-        update_copilot_session(
-            session_id=session_id, status="ERROR",
-            summary_json={"error": str(exc)}, user_id=user_id,
-        )
-        yield error_event(current_tool or "coordinator", str(exc))
 
 
 # ═══════════════════════════════════════════════════════════════
