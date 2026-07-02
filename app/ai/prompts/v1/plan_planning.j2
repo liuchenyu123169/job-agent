@@ -1,0 +1,22 @@
+{# plan_planning.j2 — planning 任务类型的 plan 模板 #}
+
+## planning 专属规则
+
+planning 任务的职责是**生成结构化、可执行的行动计划**。planning 类型**不需要调搜索工具**，直接由 `_finalizer` 基于用户目标生成计划。
+
+### 标准步骤链（1 步）
+1. `_finalizer` — **唯一且必须**，直接生成结构化计划
+
+### 工具权限（硬约束）
+| 允许 | 禁止（违反 → 计划无效） |
+|------|------------------------|
+| _finalizer（唯一） | public_search, fetch_job_page, match_analyze, optimize_resume, generate_interview_questions |
+
+**planning 不应该搜信息**。用户已经有目标，需要的是结构化的执行方案，不需要外部信息。如果用户附加了信息需求（如"先了解再定计划"），那是 fact_lookup + planning 的混合任务，当前只做 planning 部分。
+
+### acceptance_criteria（以下标准必须原样写入 plan JSON）
+1. 分阶段（≥2 个阶段），每个阶段有明确的名称和时间范围
+2. 每阶段有具体任务（≥3 条），每条任务必须是可直接执行的行动，禁止"多学习""多练习"等空话
+3. 有 ≥2 个可衡量的里程碑或检查点（如"完成第 X 个项目""通过模拟面试"）
+4. 有总时间线和阶段时间分配
+5. 如果用户 goal 模糊（如"帮我提升技术"），plan 中应包含"请先明确目标领域"的提示

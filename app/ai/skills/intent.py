@@ -1,10 +1,14 @@
-"""意图分类器 — 将用户 goal + 匹配的 Skill 映射为结构化的路由决策。
+"""意图分类器 — 将用户 goal + 匹配的 Skill + 任务分类器映射为结构化的路由决策。
+
+Phase 2 Round A: 集成 task_classifier，新增 task_type / expected_output_shape 字段。
 
 设计考量：
   - 集中管理 Skill 名称常量和 Intent 类型常量，避免中文 YAML 改名后映射静默失效
   - classify_intent() 是 copilot_run 路由前的唯一决策点
   - decision_source 字段提供结构化路由来源（方便日志聚合）
   - resume_generation 是特殊的 fixed intent：允许 personal_info 替代 resume_id
+  - Phase 2: task_classifier.classify_task() 提供以"答案结构"为中心的分类，
+    与旧的 Skill 关键词匹配并行，优先使用新分类器决定路由
 
 开发约束：
   新增 Skill 时必须同步更新两处：
@@ -103,6 +107,7 @@ SOURCE_NO_SKILL_MATCH = "no_skill_match"
 SOURCE_FIXED_SKILL_MATCH = "fixed_skill_match"
 SOURCE_OPEN_SKILL_MATCH = "open_skill_match"
 SOURCE_MIXED_SKILL_MATCH = "mixed_skill_match"
+SOURCE_TASK_CLASSIFIER = "task_classifier"  # Phase 2: 路由由 task_classifier 决定，非 Skill 匹配
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -112,7 +117,7 @@ SOURCE_MIXED_SKILL_MATCH = "mixed_skill_match"
 @dataclass
 class IntentResult:
     """路由决策结果。"""
-    intent_type: str              # INTENT_* 常量
+    intent_type: str              # INTENT_* 常量（Phase 2: 保留兼容，新代码优先用 task_type）
     route: str                    # "direct_tools" | "orchestrator"
     is_fixed: bool
     decision_source: str          # SOURCE_* 常量
@@ -121,115 +126,158 @@ class IntentResult:
     skill_hints: list[dict] = field(default_factory=list)
     rationale: str = ""
     allows_personal_info: bool = False
+    # Phase 2 Round A: 任务类型分类
+    task_type: str = ""                      # 8 类之一：fact_lookup / comparison / ...
+    expected_output_shape: str = ""          # 期望输出结构（自然语言描述）
+    execution_mode: str = ""                 # comparison_search | comparison_structured | ""
 
 
 # ═══════════════════════════════════════════════════════════════
 # 分类函数
 # ═══════════════════════════════════════════════════════════════
 
-def classify_intent(goal: str, matched_skills: "list[Skill]") -> IntentResult:
+async def classify_intent(
+    goal: str,
+    matched_skills: "list[Skill]",
+    external_urls: list[str] | None = None,
+    job_id: int | None = None,
+    extra_context_text: str = "",
+) -> IntentResult:
     """将用户意图分类为固定/开放任务，决定路由路径。
+
+    Phase 2 Round A 流程：
+    1. task_classifier.classify_task(goal) → 获取 task_type + expected_output_shape
+    2. 按 task_type 决定 route（rewrite/extraction → direct_tools，其余 → orchestrator）
+    3. 对于 direct_tools 路径，从 matched_skills 中提取工具链
+    4. 对于 orchestrator 路径，将 matched_skills 转为 skill_hints
+    5. 旧 intent_type 字段保留（向后兼容），从 task_type 映射得到
+    6. Phase 3: 根据上下文判定 execution_mode（comparison_search / comparison_structured）
 
     Args:
         goal: 用户输入文本
         matched_skills: skill_registry.match_all() 返回的 Skill 列表
+        external_urls: 用户提供的外部 URL 列表
+        job_id: 已选定的岗位 ID
+        extra_context_text: 额外上下文文本（如 JD 长文本）
 
     Returns:
-        IntentResult，其中 route 字段指示走 _direct_tools 还是 orchestrator
+        IntentResult，其中 task_type 和 expected_output_shape 已填充
     """
-    if not matched_skills:
-        return IntentResult(
-            intent_type=INTENT_GENERAL_OPEN,
-            route="orchestrator",
-            is_fixed=False,
-            decision_source=SOURCE_NO_SKILL_MATCH,
-            matched_skills=[],
-            rationale=f"无匹配 Skill，goal='{goal[:60]}' 作为开放任务交 orchestrator 处理",
-        )
-
-    # 按 Skill 名查找 intent type
-    fixed_skills: list[dict] = []
-    open_skills: list[dict] = []
-    unknown_skills: list[str] = []
-
-    for s in matched_skills:
-        intent_type = SKILL_INTENT_MAP.get(s.name)
-        if intent_type is None:
-            unknown_skills.append(s.name)
-            # 未知 skill → 安全降级为 open
-            open_skills.append(_skill_to_hint(s))
-        elif intent_type in FIXED_INTENT_TYPES:
-            fixed_skills.append(_skill_to_hint(s))
-        else:
-            open_skills.append(_skill_to_hint(s))
-
-    if unknown_skills:
-        logger.warning(
-            "[IntentClassifier] unknown skills not in SKILL_INTENT_MAP: %s",
-            unknown_skills,
-        )
-
-    # ── 决策 ──
-    has_fixed = bool(fixed_skills)
-    has_open = bool(open_skills)
-
-    if has_fixed and not has_open:
-        # 纯固定意图 → direct_tools
-        tools = _collect_fixed_tools(matched_skills)
-        intent_types = list(dict.fromkeys(
-            SKILL_INTENT_MAP.get(s.name, INTENT_INFO_GATHERING)
-            for s in matched_skills
-        ))
-        return IntentResult(
-            intent_type=intent_types[0],
-            route="direct_tools",
-            is_fixed=True,
-            decision_source=SOURCE_FIXED_SKILL_MATCH,
-            tools=tools,
-            matched_skills=[s.name for s in matched_skills],
-            rationale=(
-                f"固定意图: 匹配 Skill {[s.name for s in matched_skills]}，"
-                f"工具链 {tools}"
-            ),
-            allows_personal_info=(
-                intent_types[0] in _FIXED_ALLOWS_PERSONAL_INFO
-            ),
-        )
-
-    # 有 open skill 参与 → orchestrator 统一规划
-    all_hints = fixed_skills + open_skills
-    intent_types = list(dict.fromkeys(
-        SKILL_INTENT_MAP.get(s.name, INTENT_INFO_GATHERING)
-        for s in matched_skills
-    ))
-    # 取第一个非 fixed 的 intent type 作为主类型
-    primary = next(
-        (t for t in intent_types if t not in FIXED_INTENT_TYPES),
-        intent_types[0],
+    from app.ai.skills.task_classifier import (
+        classify_task, get_route_for_task_type,
+        TASK_TYPE_REWRITE, TASK_TYPE_EXTRACTION,
     )
 
-    if has_fixed and has_open:
-        source = SOURCE_MIXED_SKILL_MATCH
-        rationale = (
-            f"混合意图: fixed={[h['name'] for h in fixed_skills]}, "
-            f"open={[h['name'] for h in open_skills]}，交 orchestrator 统一规划"
-        )
+    # ── Step 1: 任务类型分类（含 execution_mode 判定）──
+    tc = await classify_task(
+        goal,
+        external_urls=external_urls,
+        job_id=job_id,
+        extra_context_text=extra_context_text,
+    )
+    task_type = tc.task_type
+    output_shape = tc.expected_output_shape
+    execution_mode = tc.execution_mode
+
+    # ── Step 2: 决定路由 ──
+    route = get_route_for_task_type(task_type)
+
+    # ── Step 3: 旧 intent_type 映射（向后兼容）──
+    intent_type = _task_type_to_intent(task_type)
+
+    # ── Step 4: 工具链 & skill_hints ──
+    tools: list[str] = []
+    skill_hints: list[dict] = []
+    matched_names: list[str] = []
+    is_fixed: bool
+
+    if route == "direct_tools":
+        # rewrite / extraction → 从 matched_skills 提取工具链
+        tools = _collect_fixed_tools(matched_skills)
+        matched_names = [s.name for s in matched_skills]
+        for s in matched_skills:
+            skill_hints.append(_skill_to_hint(s))
+
+        # ── 防御：工具链为空时降级到 orchestrator ──
+        if not tools:
+            logger.warning(
+                "[IntentClassifier] task_type=%s → direct_tools but no tools extracted "
+                "(matched_skills=%s). Falling back to orchestrator.",
+                task_type, matched_names,
+            )
+            route = "orchestrator"
+            is_fixed = False
+            decision_source = SOURCE_NO_SKILL_MATCH
+            rationale = (
+                f"任务类型 {task_type}（置信度 {tc.confidence:.0%}）→ "
+                f"本应 direct_tools，但无可用工具（Skill 未命中），降级到 orchestrator。"
+                f"来源: {tc.source}"
+            )
+        else:
+            is_fixed = True
+            decision_source = SOURCE_TASK_CLASSIFIER
+            rationale = (
+                f"任务类型 {task_type}（置信度 {tc.confidence:.0%}）→ direct_tools，"
+                f"工具链 {tools}，分类来源: {tc.source}，Skill: {matched_names}"
+            )
     else:
-        source = SOURCE_OPEN_SKILL_MATCH
-        rationale = (
-            f"开放意图: 匹配 Skill {[s.name for s in matched_skills]}，"
-            f"需要 Planner 动态生成步骤"
-        )
+        # orchestrator 路径 → matched_skills 转为 skill_hints
+        if not matched_skills:
+            decision_source = SOURCE_NO_SKILL_MATCH
+            is_fixed = False
+            rationale = (
+                f"任务类型 {task_type}（置信度 {tc.confidence:.0%}）→ orchestrator，"
+                f"无匹配 Skill，分类来源: {tc.source}"
+            )
+        else:
+            # Phase 2: 路由由 task_classifier 决定，Skill 只提供 hints
+            decision_source = SOURCE_TASK_CLASSIFIER
+            is_fixed = False
+            for s in matched_skills:
+                matched_names.append(s.name)
+                skill_hints.append(_skill_to_hint(s))
+
+            rationale = (
+                f"任务类型 {task_type}（置信度 {tc.confidence:.0%}）→ orchestrator，"
+                f"匹配 Skill（仅作 hints）: {matched_names}，分类来源: {tc.source}，"
+                f"分类理由: {tc.rationale}"
+            )
 
     return IntentResult(
-        intent_type=primary,
-        route="orchestrator",
-        is_fixed=False,
-        decision_source=source,
-        matched_skills=[s.name for s in matched_skills],
-        skill_hints=all_hints,
+        intent_type=intent_type,
+        route=route,
+        is_fixed=is_fixed,
+        decision_source=decision_source,
+        tools=tools,
+        matched_skills=matched_names,
+        skill_hints=skill_hints,
         rationale=rationale,
+        allows_personal_info=(intent_type in _FIXED_ALLOWS_PERSONAL_INFO),
+        task_type=task_type,
+        expected_output_shape=output_shape,
+        execution_mode=execution_mode,
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# task_type ↔ intent_type 映射（过渡期双向桥接）
+# ═══════════════════════════════════════════════════════════════
+
+_TASK_TYPE_TO_INTENT: dict[str, str] = {
+    "fact_lookup":       INTENT_INFO_GATHERING,
+    "comparison":        INTENT_COMPARISON,
+    "planning":          INTENT_PLANNING,
+    "analysis":          INTENT_MATCH_ANALYSIS,
+    "recommendation":    INTENT_JOB_RECOMMENDATION,
+    "rewrite":           INTENT_RESUME_OPTIMIZATION,
+    "extraction":        INTENT_INTERVIEW_PREP,
+    "decision_support":  INTENT_FULL_PREP,
+}
+
+
+def _task_type_to_intent(task_type: str) -> str:
+    """将新 task_type 映射回旧 intent_type（向后兼容）。"""
+    return _TASK_TYPE_TO_INTENT.get(task_type, INTENT_GENERAL_OPEN)
 
 
 # ═══════════════════════════════════════════════════════════════

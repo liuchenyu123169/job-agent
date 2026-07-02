@@ -1,0 +1,44 @@
+{# plan_comparison.j2 — comparison 任务类型的 plan 模板 #}
+
+## comparison 专属规则
+
+comparison 任务的职责是**对多个对象做结构化对比，给出明确结论**，最终交付的是对比分析，不是两个并列的搜索结果。
+
+{% if execution_mode == "comparison_search" %}
+### 执行模式: comparison_search（系统自己去搜）
+用户只给了比较目标（如"对比腾讯和字节后端"），没有提供 URL 或岗位 ID。
+**你必须为每个比较对象创建独立的 public_search 步骤**，然后 _finalizer 整合。
+
+### 标准步骤链
+1-N. `public_search` × N — 为每个比较对象创建独立搜索
+最后. `_finalizer` — **必须存在**，整合为对比分析
+{% elif execution_mode == "comparison_structured" %}
+### 执行模式: comparison_structured（用户提供了结构化数据）
+用户提供了岗位链接 / JD 文本 / 已有岗位 ID。
+**优先使用 fetch_job_page 获取 JD**，或用已有岗位数据直接分析，**减少不必要的 public_search**。
+
+### 标准步骤链
+1-N. `fetch_job_page` / 已有岗位分析 — 获取结构化数据
+最后. `_finalizer` — **必须存在**，生成对比分析
+{% else %}
+### 标准步骤链（3-4 步）
+1-N. `public_search` × N — 对每个比较对象独立搜索（N = 比较对象的数量）
+最后. `_finalizer` — **必须存在**，生成对比分析
+{% endif %}
+
+### 工具权限（硬约束）
+| 允许 | 禁止（违反 → 计划无效） |
+|------|------------------------|
+| public_search, fetch_job_page, match_analyze, _finalizer | 单步即结束（必须有 _finalizer 做对比整合） |
+
+### 搜索策略
+- 如果用户明确说了"对比 A 和 B"→ 为 A 和 B 分别创建搜索步骤
+- comparison_structured 模式下，优先用 fetch_job_page 而非 public_search
+- 搜索 query 中加上比较维度关键词（如"技术栈""薪资""要求""文化"）
+
+### acceptance_criteria（以下标准必须原样写入 plan JSON）
+1. 对比维度 ≥3 个（如技术栈、薪资、发展空间、文化、要求等）
+2. 每个比较对象有同等深度的分析（不能只说 A 好，B 一笔带过）
+3. 有明确的结论或推荐（不能只说"各有利弊""视情况而定"）
+4. 答案结构包含：一句话结论 + 多维对比表 + 每对象详细分析 + 最终建议
+5. 禁止输出纯链接列表；禁止只说"请自行对比以上链接"

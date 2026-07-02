@@ -24,6 +24,11 @@ class PipelineContext:
     # 用户意图
     goal: str | None = None
 
+    # Phase 2 任务分类（Round A）
+    task_type: str = ""              # 8 类之一：fact_lookup / comparison / planning / analysis / ...
+    expected_output_shape: str = ""  # 自然语言描述期望输出结构
+    execution_mode: str = ""         # 执行模式：comparison_search | comparison_structured | ""
+
     # 外部输入（URL、额外文本等）
     external_urls: list[str] = field(default_factory=list)
     extra_context_text: str = ""
@@ -65,6 +70,9 @@ class PipelineContext:
             "external_urls": list(self.external_urls),
             "executed_tools": list(self.executed_tools),
             "task_ids": list(self.task_ids),
+            "task_type": self.task_type,
+            "expected_output_shape": self.expected_output_shape,
+            "execution_mode": self.execution_mode,
             "tool_results": dict(self.tool_results),
         }
 

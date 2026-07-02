@@ -86,13 +86,15 @@ async def precheck(
     task_type: str,
     context: "PipelineContext",
     user_id: int,
+    execution_mode: str = "",
 ) -> tuple[bool, list[dict]]:
-    """按任务类型动态判断前置条件。
+    """按任务类型（+ execution_mode）动态判断前置条件。
 
     Args:
-        task_type: 来自 classify_intent() 的 intent_type
+        task_type: 来自 classify_intent() 的 task_type（新 8 类）或 intent_type（旧）
         context: PipelineContext（含 resume_id / job_id / external_urls 等）
         user_id: 当前用户 ID
+        execution_mode: comparison_search | comparison_structured | ""
 
     Returns:
         (ok, blockers):
@@ -103,6 +105,10 @@ async def precheck(
     if rules is None:
         logger.warning("[Precheck] unknown task_type='%s', falling back to permissive", task_type)
         return True, []
+
+    # ── comparison 按 execution_mode 分流 ──
+    if task_type == "comparison" and execution_mode:
+        return _precheck_comparison(context, execution_mode)
 
     blockers: list[dict] = []
 
@@ -180,5 +186,49 @@ async def precheck(
                      [b["field"] for b in blockers])
     else:
         logger.info("[Precheck] task_type=%s OK", task_type)
+
+    return len(blockers) == 0, blockers
+
+
+def _precheck_comparison(
+    context: "PipelineContext",
+    execution_mode: str,
+) -> tuple[bool, list[dict]]:
+    """按 execution_mode 判断 comparison 的前置条件。
+
+    comparison_search:
+      - 不要求 job_id / external_urls / extra_context_text
+      - 比较对象已在 goal 中，后续由 public_search 自己补证据
+
+    comparison_structured:
+      - 至少需要一个可比较对象：job_id / external_urls / JD 长文本
+    """
+    blockers: list[dict] = []
+
+    if execution_mode == "comparison_search":
+        logger.info("[Precheck] comparison_search: no prerequisites required")
+        return True, []
+
+    if execution_mode == "comparison_structured":
+        has_comparable = bool(
+            context.job_id
+            or context.external_urls
+            or (context.extra_context_text and len(context.extra_context_text) > 50)
+        )
+        if not has_comparable:
+            blockers.append({
+                "type": "missing_input",
+                "field": "comparable",
+                "description": "结构化对比需要至少一个可比较对象",
+                "resolution_hint": "请创建目标岗位、提供岗位链接、或粘贴 JD 文本",
+                "user_prompt": "请提供要对比的岗位链接、JD 文本或选择已有岗位",
+                "resolved": False,
+            })
+
+    if blockers:
+        logger.info("[Precheck] comparison_structured BLOCKED: %s",
+                     [b["field"] for b in blockers])
+    else:
+        logger.info("[Precheck] comparison_structured OK")
 
     return len(blockers) == 0, blockers

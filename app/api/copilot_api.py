@@ -40,7 +40,7 @@ from app.infrastructure.db.crud import (
     update_copilot_session,
 )
 from app.shared.schemas.agent_schema import CopilotRunRequest
-from app.ai.skills.intent import classify_intent
+from app.ai.skills.intent import classify_intent, IntentResult
 from app.ai.skills.registry import skill_registry
 from app.tools import tool_registry
 
@@ -98,10 +98,20 @@ async def copilot_run(
         session_id = int(session["id"])
         context.session_id = session_id
 
-    # ── 路由决策 (Phase 2: classify_intent) ──
+    # ── 路由决策 (Phase 2: classify_intent + task_classifier) ──
     _t0 = time.monotonic()
     skills = skill_registry.match_all(payload.goal)
-    intent = classify_intent(payload.goal, skills)
+    intent = await classify_intent(
+        payload.goal, skills,
+        external_urls=context.external_urls,
+        job_id=context.job_id,
+        extra_context_text=context.extra_context_text,
+    )
+
+    # Phase 2 Round A: 注入任务分类到上下文
+    context.task_type = intent.task_type
+    context.expected_output_shape = intent.expected_output_shape
+    context.execution_mode = intent.execution_mode
 
     # 结构化路由追踪日志（回答"为什么走这条路"）
     trace_route(
@@ -114,22 +124,21 @@ async def copilot_run(
 
     if intent.route == "direct_tools":
         logger.info(
-            "[Copilot:route] fixed intent=%s source=%s skills=%s tools=%s",
-            intent.intent_type, intent.decision_source,
+            "[Copilot:route] %s task_type=%s source=%s skills=%s tools=%s",
+            intent.route, intent.task_type, intent.decision_source,
             intent.matched_skills, intent.tools,
         )
-        generator = _direct_tools(context, user_id, session_id, intent.tools)
+        generator = _direct_tools(context, user_id, session_id, intent)
     else:
         logger.info(
-            "[Copilot:route] open intent=%s source=%s skills=%s rationale=%s",
-            intent.intent_type, intent.decision_source,
-            intent.matched_skills, intent.rationale,
+            "[Copilot:route] %s task_type=%s source=%s skills=%s rationale=%s",
+            intent.route, intent.task_type, intent.decision_source,
+            intent.matched_skills, intent.rationale[:80],
         )
         orchestrator = ClosedLoopOrchestrator()
         generator = orchestrator.run_stream(
             payload.goal, context, user_id,
-            skill_hints=intent.skill_hints,
-            intent_type=intent.intent_type,
+            intent=intent,
         )
 
     return StreamingResponse(
@@ -253,16 +262,37 @@ async def _direct_tools(
     context: PipelineContext,
     user_id: int,
     session_id: int,
-    tools: list[str],
+    intent: "IntentResult",
 ) -> AsyncGenerator[str, None]:
-    """直接按 tools 列表顺序执行原子工具（兼容 fast 模式）。
+    """直接按 IntentResult 中的 tools 列表顺序执行原子工具。
+
+    Phase 2 Round A: 接收完整 IntentResult，注入 task_type/expected_output_shape。
 
     支持 LLM token 级流式推送：通过 ContextVar 捕获工具内部 LLM 调用产生的 token。
     """
     from app.application.workflows.common import _token_callback
 
+    tools = intent.tools
     success_count = 0
     failed_tools: list[str] = []
+
+    # ── 防御：空工具列表直接报错，不标记 COMPLETED ──
+    if not tools:
+        logger.error(
+            "[Copilot:tools] direct_tools route with empty tools list. "
+            "task_type=%s intent_type=%s matched_skills=%s",
+            intent.task_type, intent.intent_type, intent.matched_skills,
+        )
+        yield error_event(
+            "orchestrator",
+            "系统未能匹配到可执行工具。请尝试更具体地描述需求，如'帮我优化简历中的项目经历'。",
+        )
+        yield final_event(
+            "未能执行任何工具 — 请提供更具体的输入后重试",
+            context.task_ids, context.session_id,
+        )
+        metrics.record_tool_error("_empty_tools")
+        return
 
     try:
         for tool_name in tools:

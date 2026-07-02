@@ -1,0 +1,29 @@
+{# plan_generic.j2 — 兜底 plan 模板（recommendation / rewrite / extraction / decision_support） #}
+
+## 通用规则
+
+当前任务类型 `{{ task_type }}` 尚无专属 plan 模板，使用以下通用规则：
+
+### 标准步骤链
+根据任务类型选择最短工具链：
+- `recommendation` → `recommend_jobs` 或 `public_search`（搜集候选集）→ `_finalizer`
+- `rewrite` → `optimize_resume` 或 `generate_resume` → `_finalizer`
+- `extraction` → `generate_interview_questions` → `_finalizer`
+- `decision_support` → 多步骤组合（match_analyze + optimize_resume + generate_interview_questions）→ `_finalizer`
+
+### 关键约束
+- `_finalizer` 必须是最后一步。如果 plan_steps 中已有具体工具，最后仍要追加 `_finalizer` 做结果整合。
+- 不要生成超过 4 步的计划（目标是最短有效链）。
+- 如果不确定该用哪些工具，优先用最少的工具。
+- 不要因为存在 `resume_id` / `job_id` 就自动插入 `match_analyze`。
+
+### 工具权限（按 task_type 放开）
+| task_type | 允许的工具 |
+|-----------|----------|
+| recommendation | recommend_jobs, public_search, fetch_job_page, _finalizer |
+| rewrite | optimize_resume, generate_resume, match_analyze, _finalizer |
+| extraction | generate_interview_questions, search_knowledge, _finalizer |
+| decision_support | match_analyze, optimize_resume, generate_interview_questions, public_search, _finalizer |
+
+### acceptance_criteria
+请根据 task_type 和 expected_output_shape 生成具体可验证的标准。禁止使用"返回至少一条结果"这类空泛标准。

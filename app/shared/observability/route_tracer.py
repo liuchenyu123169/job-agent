@@ -32,7 +32,8 @@ def trace_route(
     """输出单行 JSON 路由决策日志。
 
     字段说明:
-      - decision_source: no_skill_match | fixed_skill_match | open_skill_match | mixed_skill_match
+      - decision_source: no_skill_match | fixed_skill_match | open_skill_match
+                        | mixed_skill_match | task_classifier (Phase 2: 分类器决定路由)
       - route: direct_tools | orchestrator
       - rationale: 人类可读的决策说明
     """
@@ -45,6 +46,8 @@ def trace_route(
         "user_id": user_id,
         "goal_preview": (goal or "")[:120],
         "intent_type": intent_result.intent_type,
+        "task_type": intent_result.task_type,
+        "execution_mode": intent_result.execution_mode,
         "route": intent_result.route,
         "decision_source": intent_result.decision_source,
         "is_fixed": intent_result.is_fixed,

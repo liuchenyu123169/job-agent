@@ -1,0 +1,25 @@
+{# plan_fact_lookup.j2 — fact_lookup 任务类型的 plan 模板 #}
+
+## fact_lookup 专属规则
+
+fact_lookup 任务的职责是**搜集信息并整合成答案**，最终交付的是自然语言答案，不是链接堆砌。
+
+### 标准步骤链（2-3 步）
+1. `public_search` 或 `fetch_job_page` — 搜集原始信息
+2. `_finalizer` — **必须存在**，将信息整合为自然语言答案
+
+### 工具权限（硬约束）
+| 允许 | 禁止（违反 → 计划无效） |
+|------|------------------------|
+| public_search, fetch_job_page, _finalizer | match_analyze, optimize_resume, generate_interview_questions, recommend_jobs |
+
+### 搜索策略
+- 如果用户的 goal 明确提到公司/岗位/技术，使用这些词作为 query
+- 如果 goal 比较模糊，用 goal 的前 30 个字作为 query
+- 最多 1-2 次搜索，不要堆砌搜索步骤
+
+### acceptance_criteria（以下标准必须原样写入 plan JSON）
+1. 答案主体是自然语言摘要（3-5 句），不是链接列表
+2. 摘要中出现了 ≥2 个具体实体（技术名/公司名/人名/数字/时间）
+3. 有 ≥1 个可追溯的来源引用（标题+URL）
+4. 如果搜索结果不足以回答用户问题，明确告知并建议更换搜索词

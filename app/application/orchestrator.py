@@ -22,7 +22,7 @@ from app.shared.state import PipelineContext, TaskState
 from app.ai.llm import invoke_llm
 from app.infrastructure.db.crud import create_agent_run, get_agent_run, update_agent_run
 from app.application.step_mapping import resolve as resolve_step_tool
-from app.ai.verifiers import VerificationResult, get_verifier
+from app.ai.verifiers import VerificationResult, get_verifier, get_second_level_verifier
 from app.ai.prompt_engine import PromptManager
 from app.tools.registry import tool_registry
 
@@ -57,8 +57,18 @@ class ClosedLoopOrchestrator:
     # Main entry points
     # ============================================================
 
-    async def run(self, goal, context, user_id, run_id=None, skill_hints=None):
-        """Full state machine (non-streaming)."""
+    async def run(self, goal, context, user_id, run_id=None, skill_hints=None, intent=None):
+        """Full state machine (non-streaming).
+
+        Phase 2 Round A: 同步接入 IntentResult（与 run_stream 保持一致）。
+        """
+        # Phase 2: 从 IntentResult 提取上下文
+        if intent is not None:
+            skill_hints = skill_hints or intent.skill_hints
+            context.task_type = context.task_type or intent.task_type
+            context.expected_output_shape = context.expected_output_shape or intent.expected_output_shape
+            context.execution_mode = context.execution_mode or intent.execution_mode
+
         task_state, run_id = await self._init_task_state(goal, context, user_id, run_id)
 
         if task_state.goal_status in ("created", "planning"):
@@ -89,10 +99,38 @@ class ClosedLoopOrchestrator:
             task_state = await self._finalize(goal, task_state, context)
             await self._persist(task_state, run_id, user_id)
 
+            # TCV 失败 → 一次结构补救 replan
+            if task_state.needs_replan():
+                logger.info("[Orchestrator:run] TCV failed, attempting post-finalize replan")
+                task_state.verification_results = [
+                    v for v in task_state.verification_results
+                    if v.get("step_id") != "final_report"
+                ]
+                task_state = await self._replan(goal, task_state, context)
+                await self._persist(task_state, run_id, user_id)
+                if not task_state.is_blocked():
+                    task_state = await self._execute_verify_loop(goal, task_state, context, user_id, run_id)
+                    await self._persist(task_state, run_id, user_id)
+                    if task_state.all_verified():
+                        task_state = await self._finalize(goal, task_state, context)
+                        await self._persist(task_state, run_id, user_id)
+
         return task_state
 
-    async def run_stream(self, goal, context, user_id, run_id=None, skill_hints=None, intent_type=""):
-        """SSE streaming version."""
+    async def run_stream(self, goal, context, user_id, run_id=None, skill_hints=None, intent_type="", intent=None):
+        """SSE streaming version.
+
+        Phase 2 Round A: 接收 IntentResult（优先），从中提取 skill_hints / intent_type /
+        task_type / expected_output_shape。旧的 skill_hints + intent_type 参数保留作为 fallback。
+        """
+        # Phase 2: 从 IntentResult 提取上下文
+        if intent is not None:
+            skill_hints = skill_hints or intent.skill_hints
+            intent_type = intent_type or intent.intent_type
+            context.task_type = context.task_type or intent.task_type
+            context.expected_output_shape = context.expected_output_shape or intent.expected_output_shape
+            context.execution_mode = context.execution_mode or intent.execution_mode
+
         task_state, run_id = await self._init_task_state(goal, context, user_id, run_id)
 
         # Phase 1: Plan
@@ -167,11 +205,39 @@ class ClosedLoopOrchestrator:
                 yield error_event("orchestrator", f"Step failure: {task_state.failed_steps}")
                 break
 
-        # Phase 5: Finalize
+        # Phase 5: Finalize（含 TCV 失败后的二次 replan）
         if task_state.all_verified() and task_state.goal_status != "completed":
             yield step_start_event("orchestrator.finalize", {}, label="Finalize")
             task_state = await self._finalize(goal, task_state, context)
             await self._persist(task_state, run_id, user_id)
+
+            # ── TCV 失败 → 尝试一次结构补救 replan ──
+            if task_state.needs_replan():
+                logger.info(
+                    "[Orchestrator] TCV failed, attempting 1 post-finalize replan "
+                    "(attempt %d/%d)", task_state.replan_count + 1, task_state.max_replan,
+                )
+                yield step_start_event("orchestrator.replan", {
+                    "attempt": task_state.replan_count + 1, "reason": "TCV结构验收未通过",
+                }, label="Replan")
+                # 清除 TCV 的失败结果（让 replan 能正常推进）
+                task_state.verification_results = [
+                    v for v in task_state.verification_results
+                    if v.get("step_id") != "final_report"
+                ]
+                task_state = await self._replan(goal, task_state, context)
+                await self._persist(task_state, run_id, user_id)
+                if not task_state.is_blocked():
+                    async for event_str in self._execute_verify_loop_stream(
+                        goal, task_state, context, user_id, run_id,
+                    ):
+                        yield event_str
+                    await self._persist(task_state, run_id, user_id)
+                    # 再次 finalize
+                    if task_state.all_verified():
+                        task_state = await self._finalize(goal, task_state, context)
+                        await self._persist(task_state, run_id, user_id)
+
             if task_state.final_report:
                 yield step_token_event("orchestrator.finalize", task_state.final_report)
             yield step_complete_event("orchestrator.finalize", {
@@ -209,7 +275,10 @@ class ClosedLoopOrchestrator:
         from app.application.precheck import precheck as run_precheck
 
         task_type = task_state.goal_type or self._infer_goal_type(goal)
-        ok, blockers = await run_precheck(task_type, context, user_id)
+        ok, blockers = await run_precheck(
+            task_type, context, user_id,
+            execution_mode=context.execution_mode,
+        )
 
         task_state.blockers = blockers
         if blockers:
@@ -225,16 +294,26 @@ class ClosedLoopOrchestrator:
     # Phase 2: Plan
     # ============================================================
 
-    async def _plan(self, goal, task_state, context, skill_hints=None, intent_type=""):
-        """Generate plan steps + acceptance criteria using primary model."""
+    async def _plan(self, goal, task_state, context, skill_hints=None, intent_type="", task_type_override=""):
+        """Generate plan steps + acceptance criteria using primary model.
+
+        Phase 2 Round A: 传入 task_type 和 expected_output_shape，
+        planner 模板按 task_type 选择专属 plan 模板片段。
+        """
         tool_list = tool_registry.list_all()
         available_tools = [{"name": t.name, "description": t.description} for t in tool_list]
 
         # intent_type 从 classify_intent() 传入（强提示）；无值时用 _infer_goal_type 兜底
         goal_type = intent_type or task_state.goal_type or self._infer_goal_type(goal)
+        # Phase 2: 任务类型优先用 context 中的值
+        task_type = task_type_override or context.task_type or goal_type
+        output_shape = context.expected_output_shape or ""
 
         prompt = _prompt_manager.render("orchestrate_plan", goal=goal, goal_type=goal_type,
                                          intent_type=goal_type,
+                                         task_type=task_type,
+                                         expected_output_shape=output_shape,
+                                         execution_mode=context.execution_mode,
                                          resume_id=context.resume_id, job_id=context.job_id,
                                          available_tools=available_tools, skill_hints=skill_hints,
                                          extra_context_text=context.extra_context_text,
@@ -273,6 +352,14 @@ class ClosedLoopOrchestrator:
         task_state.acceptance_criteria = data.get("acceptance_criteria", [])
         task_state.pending_steps = [s["id"] for s in plan_steps if s.get("status") == "pending"]
         task_state.goal_status = "running"
+
+        # ── Phase 2 Round A: plan post-validate ──
+        task_state.plan_steps = self._validate_plan(
+            task_state.plan_steps, task_type,
+        )
+        task_state.pending_steps = [
+            s["id"] for s in task_state.plan_steps if s.get("status") == "pending"
+        ]
 
         logger.info("[Planner] generated %d steps, %d criteria", len(plan_steps), len(task_state.acceptance_criteria))
         return task_state
@@ -326,7 +413,7 @@ class ClosedLoopOrchestrator:
                 task_state.pending_steps = [s for s in task_state.pending_steps if s != step_id]
                 task_state.current_step = ""
 
-            vr = await self._verify_step(step, step_result, task_state.acceptance_criteria, context)
+            vr = await self._verify_step(step, step_result, task_state.acceptance_criteria, context, goal_type=task_state.goal_type)
             step["verification_result"] = vr.to_dict()
             task_state.verification_results.append(vr.to_dict())
             await self._persist(task_state, run_id, user_id)
@@ -498,7 +585,7 @@ class ClosedLoopOrchestrator:
             task_state.pending_steps = [s for s in task_state.pending_steps if s != step_id]
             task_state.current_step = ""
 
-            vr = await self._verify_step(step, step_result, task_state.acceptance_criteria, context)
+            vr = await self._verify_step(step, step_result, task_state.acceptance_criteria, context, goal_type=task_state.goal_type)
             step["verification_result"] = vr.to_dict()
             task_state.verification_results.append(vr.to_dict())
             await self._persist(task_state, run_id, user_id)
@@ -538,8 +625,13 @@ class ClosedLoopOrchestrator:
             logger.exception("[Executor] step=%s exception", step_id)
             return {"error": str(exc)}
 
-    async def _verify_step(self, step, step_result, criteria, context):
-        """Verify step output."""
+    async def _verify_step(self, step, step_result, criteria, context, goal_type=""):
+        """Verify step output. Supports two-level cascade for info_gathering tasks.
+
+        Level 1: tool-specific verifier (rule-based or LLM)
+        Level 2: InfoGatheringVerifier (only when L1 passed, goal_type=="info_gathering",
+                 and tool is public_search/fetch_job_page)
+        """
         step_id = step.get("id", "unknown")
         step_tool = step.get("tool", "")
         tool_name, _ = resolve_step_tool(step_tool)
@@ -551,8 +643,19 @@ class ClosedLoopOrchestrator:
             logger.info("[Verifier] no verifier for tool=%s, skipping", tool_name)
             return VerificationResult(passed=True, score=100.0, detail="No verifier, skipped", step_id=step_id)
 
+        # ── Level 1: 工具专用 verifier ──
         vr = await verifier.verify(step_id, step_result, criteria, context)
-        logger.info("[Verifier] step=%s tool=%s passed=%s score=%.0f", step_id, tool_name, vr.passed, vr.score)
+        logger.info("[Verifier:L1] step=%s tool=%s passed=%s score=%.0f", step_id, tool_name, vr.passed, vr.score)
+
+        # ── Level 2: InfoGatheringVerifier（仅 info_gathering 任务生效）──
+        if vr.passed and goal_type:
+            l2_verifier = get_second_level_verifier(tool_name, goal_type)
+            if l2_verifier is not None:
+                vr2 = await l2_verifier.verify(step_id, step_result, criteria, context)
+                logger.info("[Verifier:L2] step=%s tool=%s passed=%s score=%.0f → overrides L1",
+                            step_id, tool_name, vr2.passed, vr2.score)
+                return vr2  # L2 结果覆盖 L1
+
         return vr
 
     # ============================================================
@@ -627,26 +730,129 @@ class ClosedLoopOrchestrator:
     # ============================================================
 
     async def _finalize(self, goal, task_state, context):
-        """Compile final report."""
+        """Compile final report + Phase 2 Round B 结构验收。"""
         logger.info("[Finalizer] compiling report from %d tool results", len(context.tool_results))
-        report = self._compile_report(goal, task_state, context)
+        report = await self._compile_report(goal, task_state, context)
         task_state.final_report = report
         task_state.next_suggestions = self._extract_suggestions(task_state, context)
+
+        # Phase 2 Round B: TaskCompletionVerifier 结构验收
+        task_type = context.task_type or task_state.goal_type
+        if task_type:
+            from app.ai.verifiers import TaskCompletionVerifier
+            tcv = TaskCompletionVerifier()
+            vr = await tcv.verify(
+                step_id="final_report",
+                step_result={
+                    "task_type": task_type,
+                    "expected_output_shape": context.expected_output_shape,
+                    "final_report": report,
+                },
+                criteria=task_state.acceptance_criteria,
+                context=context,
+            )
+            task_state.verification_results.append(vr.to_dict())
+            if not vr.passed:
+                logger.warning(
+                    "[Finalizer] TaskCompletionVerifier FAILED: score=%.0f detail=%s",
+                    vr.score, vr.detail,
+                )
+                # TCV 失败：不设 completed，外层检测到 verification 未通过后触发 replan
+                task_state.goal_status = "running"
+                task_state.next_action = (
+                    f"最终报告结构不达标（{vr.detail}），将重新规划以改进答案结构"
+                )
+                return task_state
+            else:
+                logger.info("[Finalizer] TaskCompletionVerifier PASSED: score=%.0f", vr.score)
+
+            # Phase 3: TaskGoalVerifier 目标达成验收（仅 fact_lookup + comparison）
+            from app.ai.verifiers import TaskGoalVerifier
+            tgv = TaskGoalVerifier()
+            if tgv.supports_type(task_type):
+                vr_goal = await tgv.verify(
+                    step_id="final_report_goal",
+                    step_result={
+                        "task_type": task_type,
+                        "expected_output_shape": context.expected_output_shape,
+                        "final_report": report,
+                        "goal": goal,
+                    },
+                    criteria=task_state.acceptance_criteria,
+                    context=context,
+                )
+                task_state.verification_results.append(vr_goal.to_dict())
+                if not vr_goal.passed:
+                    logger.warning(
+                        "[Finalizer] TaskGoalVerifier FAILED: score=%.0f detail=%s",
+                        vr_goal.score, vr_goal.detail,
+                    )
+                    task_state.goal_status = "running"
+                    task_state.next_action = (
+                        f"最终答案未达成任务目标（{vr_goal.detail}），将重新规划"
+                    )
+                    return task_state
+                else:
+                    logger.info("[Finalizer] TaskGoalVerifier PASSED: score=%.0f", vr_goal.score)
+
         task_state.goal_status = "completed"
         return task_state
 
-    @staticmethod
-    def _compile_report(goal, task_state, context):
-        """Generate final report using unified ReportFormatter."""
+    async def _compile_report(self, goal, task_state, context):
+        """Generate final report using unified ReportFormatter.
+
+        Phase 3 Step 1: 在 format_report 之前插入 transformer 证据提取。
+        """
         from app.application.copilot.report_formatter import format_report
         from app.tools.output_schema import normalize_tool_output
+        from app.application.transformers import get_transformer
+
+        # 构建 step_id → verifier_score 映射（用于 finalizer 质量门）
+        vr_map: dict[str, float] = {
+            vr.get("step_id", ""): float(vr.get("score", 0))
+            for vr in task_state.verification_results
+        }
+        step_tool_to_score: dict[str, float] = {}
+        for step in task_state.plan_steps:
+            sid = step.get("id", "")
+            if sid in vr_map:
+                tool_n, _ = resolve_step_tool(step.get("tool", ""))
+                if tool_n:
+                    step_tool_to_score[tool_n] = vr_map[sid]
 
         outputs = []
         for tool_name in context.executed_tools:
             raw = context.tool_results.get(tool_name, {})
-            outputs.append(normalize_tool_output(tool_name, raw))
+            norm = normalize_tool_output(tool_name, raw)
+            if tool_name in step_tool_to_score:
+                norm["meta"]["verifier_score"] = step_tool_to_score[tool_name]
+            outputs.append(norm)
 
-        report = format_report(goal, outputs)
+        task_type = context.task_type or task_state.goal_type
+
+        # ── Phase 3: transformer 证据提取 ──
+        format_ctx: dict[str, Any] = {
+            "verifier_scores": step_tool_to_score,
+            "plan_steps": task_state.plan_steps,
+            "goal": goal,
+            "task_type": task_type,
+            "expected_output_shape": context.expected_output_shape,
+        }
+
+        if task_type:
+            transformer = get_transformer(task_type)
+            evidence = await transformer.extract(goal, outputs, format_ctx)
+            evidence_ctx = transformer.to_context(evidence)
+            format_ctx.update(evidence_ctx)
+            # 日志中记录 evidence 摘要
+            evidence.log_summary()
+
+        report = format_report(
+            goal, outputs,
+            task_type=task_type,
+            expected_output_shape=context.expected_output_shape,
+            context=format_ctx,
+        )
 
         plan_lines = ["\n\n---\n\n## Plan\n"]
         for step in task_state.plan_steps:
@@ -700,6 +906,43 @@ class ClosedLoopOrchestrator:
     # ============================================================
     # Helpers
     # ============================================================
+
+    @staticmethod
+    def _validate_plan(plan_steps: list[dict], task_type: str) -> list[dict]:
+        """Phase 2 Round A: 确保 planner 产出的 plan 满足任务类型的硬性约束。
+
+        规则：
+        - fact_lookup / comparison / planning / analysis 等需要最终答案的任务：
+          如果计划中没有 _finalizer 作为最后一步，自动追加。
+        - 不重复追加已存在的 _finalizer。
+        """
+        from app.ai.skills.task_classifier import HIGH_FREQ_TYPES
+
+        if task_type not in HIGH_FREQ_TYPES:
+            return plan_steps
+
+        # 检查是否已有 _finalizer
+        has_finalizer = any(s.get("tool") == "_finalizer" for s in plan_steps)
+        if has_finalizer:
+            return plan_steps
+
+        # 自动追加 _finalizer
+        last_step_id = plan_steps[-1]["id"] if plan_steps else "step_0"
+        new_id = f"step_{len(plan_steps) + 1}"
+        logger.info(
+            "[Planner:validate] task_type=%s 缺少 _finalizer，自动追加 step=%s",
+            task_type, new_id,
+        )
+        plan_steps.append({
+            "id": new_id,
+            "name": "生成最终答案",
+            "description": f"将前面步骤的结果整合为 {task_type} 类型的结构化答案",
+            "tool": "_finalizer",
+            "args": {},
+            "depends_on": [last_step_id] if last_step_id != "step_0" else [],
+            "status": "pending",
+        })
+        return plan_steps
 
     async def _init_task_state(self, goal, context, user_id, run_id):
         """Initialize or resume TaskState."""

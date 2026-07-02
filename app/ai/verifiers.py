@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.shared.state import PipelineContext
+from app.shared.text_utils import min_relevance_signal
 from app.ai.llm import invoke_llm
 from app.ai.prompt_engine import PromptManager
 
@@ -326,6 +327,64 @@ class RecommendVerifier(BaseVerifier):
             )
 
 
+# ═══════════════════════════════════════════════════════════════
+# InfoGatheringVerifier — 信息搜集结果验收（第二级 LLM）
+# ═══════════════════════════════════════════════════════════════
+
+class InfoGatheringVerifier(BaseVerifier):
+    """验收信息搜集/搜索类结果 — 调 fast 模型做 3 个判断题。
+
+    这是 Phase 1 唯一新增的 LLM verifier。只在 task_type=="info_gathering"
+    且第一级 UtilityVerifier 通过后才触发，作为第二级质量把关。
+
+    3 个判断题：
+    1. does_answer_goal — 搜集到的信息是否实际回答了用户问题？
+    2. has_concrete_info — 结果中是否有具体信息（技术名/数字/公司/时间等）？
+    3. from_credible_source — 主要来源是否可信？
+
+    评分: 3/3 = 90, 2/3 = 65, 1/3 = 35, 0/3 = 10
+    passed: ≥2/3 (即 65 分)
+    """
+
+    template_name = "verify_infogathering"
+
+    def _build_prompt(
+        self, step_result: dict, criteria: list[str], context: PipelineContext
+    ) -> str:
+        result_json = json.dumps(step_result, ensure_ascii=False, indent=2)
+        goal = context.goal if context else ""
+        return _prompt_manager.render(
+            self.template_name,
+            goal=goal,
+            step_result=result_json,
+        )
+
+    def _parse_response(self, response: str) -> VerificationResult:
+        data = self._extract_json(response)
+        if data is None:
+            return VerificationResult(
+                passed=False, score=0.0,
+                detail="无法解析验证结果 — LLM 未返回有效 JSON",
+                suggested_fix="请检查搜索输出是否完整",
+            )
+
+        yes_count = sum(
+            1 for key in ("does_answer_goal", "has_concrete_info", "from_credible_source")
+            if data.get(key, False)
+        )
+        score_map = {3: 90.0, 2: 65.0, 1: 35.0, 0: 10.0}
+        score = score_map.get(yes_count, 0.0)
+        passed = yes_count >= 2
+
+        return VerificationResult(
+            passed=passed,
+            score=score,
+            detail=str(data.get("detail", "")),
+            suggested_fix=(data.get("suggested_fix") or "搜索结果未能充分回应用户问题")
+            if not passed else None,
+        )
+
+
 # ── Verifier 路由表 ──
 
 _VERIFIER_MAP: dict[str, BaseVerifier] = {}
@@ -429,22 +488,87 @@ class UtilityVerifier(BaseVerifier):
 
             elif self._tool_name == "public_search":
                 items = step_result.get("items", [])
+                query = str(step_result.get("query", ""))
                 if not isinstance(items, list) or len(items) == 0:
                     return VerificationResult(
                         passed=False, score=0, detail="公开搜索未返回结果",
                         suggested_fix="请使用不同的查询词重新搜索", step_id=step_id,
                     )
-                # 检查每项至少有 title 和 url
+
+                # ── 1. 结构完整性 (权重 40%) ──
+                structure_score = 100.0
+                struct_issues: list[str] = []
                 for i, item in enumerate(items):
-                    if not isinstance(item, dict) or not item.get("title") or not item.get("url"):
-                        return VerificationResult(
-                            passed=False, score=30,
-                            detail=f"搜索结果 #{i+1} 缺少 title 或 url",
-                            suggested_fix="搜索源返回数据不完整", step_id=step_id,
+                    if not isinstance(item, dict):
+                        struct_issues.append(f"#{i+1} 格式错误")
+                        structure_score -= 30
+                        continue
+                    if not item.get("title"):
+                        struct_issues.append(f"#{i+1} 缺少标题")
+                        structure_score -= 20
+                    if not item.get("url"):
+                        struct_issues.append(f"#{i+1} 缺少 URL")
+                        structure_score -= 15
+                structure_score = max(0.0, structure_score)
+                if struct_issues and structure_score <= 0:
+                    return VerificationResult(
+                        passed=False, score=structure_score,
+                        detail=f"搜索结果结构不全: {'; '.join(struct_issues)}",
+                        suggested_fix="搜索源返回数据不完整", step_id=step_id,
+                    )
+
+                # ── 2. 相关性信号 (权重 35%) ──
+                relevance_score = 100.0
+                if query:
+                    relevant_count = sum(
+                        1 for item in items
+                        if isinstance(item, dict)
+                        and min_relevance_signal(
+                            query,
+                            str(item.get("title", "")),
+                            str(item.get("snippet", "")),
                         )
+                    )
+                    relevant_ratio = relevant_count / len(items) if items else 0
+                    relevance_score = relevant_ratio * 100.0
+                    if relevant_ratio < 0.3:
+                        relevance_score = max(0.0, relevant_ratio * 100.0)
+                else:
+                    relevance_score = 50.0  # 无 query 时跳过相关性检查，给中性分
+
+                # ── 3. 信息密度 (权重 25%) ──
+                snippet_lengths = [
+                    len(str(item.get("snippet", "")))
+                    for item in items
+                    if isinstance(item, dict)
+                ]
+                avg_snippet_len = sum(snippet_lengths) / len(snippet_lengths) if snippet_lengths else 0
+                # avg >= 80 chars 为满分，< 20 为 0 分
+                density_score = min(100.0, max(0.0, (avg_snippet_len - 20) / 60 * 100.0))
+
+                # 综合评分
+                total_score = structure_score * 0.4 + relevance_score * 0.35 + density_score * 0.25
+                passed = total_score >= 60.0 and relevance_score >= 30.0
+
+                detail_parts = [f"搜索返回 {len(items)} 条结果"]
+                if relevant_count > 0:
+                    detail_parts.append(f"相关 {relevant_count}/{len(items)}")
+                if avg_snippet_len > 0:
+                    detail_parts.append(f"平均摘要 {avg_snippet_len:.0f} 字符")
+                detail = "；".join(detail_parts)
+
+                suggestion = None
+                if not passed:
+                    if relevance_score < 30.0:
+                        suggestion = f"搜索结果与查询「{query[:60]}」相关性极低，建议更换更具体的搜索词"
+                    elif density_score < 40.0:
+                        suggestion = "搜索结果摘要过短，可能未抓取到有效网页内容"
+                    else:
+                        suggestion = "搜索质量不足，请尝试添加更具体的限定词重新搜索"
+
                 return VerificationResult(
-                    passed=True, score=85, detail=f"搜索返回 {len(items)} 条结果",
-                    step_id=step_id,
+                    passed=passed, score=round(total_score, 1),
+                    detail=detail, suggested_fix=suggestion, step_id=step_id,
                 )
 
             elif self._tool_name == "fetch_job_page":
@@ -487,6 +611,230 @@ class UtilityVerifier(BaseVerifier):
             )
 
 
+# ═══════════════════════════════════════════════════════════════
+# TaskCompletionVerifier — 最终答案结构验收（纯规则，不调 LLM）
+# ═══════════════════════════════════════════════════════════════
+
+class TaskCompletionVerifier(BaseVerifier):
+    """验收最终报告的结构是否匹配 task_type 的 expected_output_shape。
+
+    职责边界：
+      - 只检查：输出结构是否达标（是否有必要的标题/段落/元素）
+      - 不检查：事实正确性、内容质量、LLM 幻觉
+      - 决定：是否需要 replan（passed=False 时触发）
+
+    输入（完整上下文）：
+      - task_type: 任务类型
+      - expected_output_shape: 期望输出结构（来自 EXPECTED_OUTPUT_SHAPES）
+      - final_report: 最终生成的 Markdown 报告
+      - normalized_outputs: 原始标准化工具输出（供参考，不直接判断）
+
+    检查项（按 task_type 不同）：
+      fact_lookup: 有关键信息段落 + 来源引用（或明确的"无结果"说明）
+      comparison: 有对比结论段落 + 详细分析段落
+      planning: 有阶段标记（## 或 阶段/Phase 关键词）
+      analysis: 有评分/等级标记 + 建议段落
+      其他: 最低限度 — 非纯链接列表 + 长度 ≥ 60 字符
+    """
+
+    template_name = "verify_task_completion"  # 不使用模板
+
+    # 每种 task_type 的必须结构元素
+    _STRUCTURAL_REQUIREMENTS: dict[str, list[str]] = {
+        "fact_lookup": ["关键信息", "来源"],
+        "comparison": ["对比结论", "详细分析", "|"],  # | 表示 Markdown 表格分隔符
+        "planning": ["阶段", "任务"],
+        "analysis": ["维度", "建议"],
+        "recommendation": [],
+        "rewrite": [],
+        "extraction": [],
+        "decision_support": [],
+    }
+
+    def _build_prompt(self, step_result, criteria, context):
+        return ""  # 纯规则，不调 LLM
+
+    def _parse_response(self, response):
+        return VerificationResult(passed=False, score=0, detail="")
+
+    async def verify(
+        self,
+        step_id: str,
+        step_result: dict[str, Any],
+        criteria: list[str],
+        context: PipelineContext | None = None,
+    ) -> VerificationResult:
+        """纯规则结构验收。
+
+        step_result 预期包含：
+          - task_type: str
+          - expected_output_shape: str
+          - final_report: str
+          - outputs: list[dict]（可选）
+        """
+        try:
+            task_type = str(step_result.get("task_type", ""))
+            final_report = str(step_result.get("final_report", ""))
+            expected_shape = str(step_result.get("expected_output_shape", ""))
+
+            if not final_report.strip():
+                return VerificationResult(
+                    passed=False, score=0,
+                    detail="最终报告为空",
+                    suggested_fix="所有步骤均未产生有效输出，请检查工具执行是否正常",
+                    step_id=step_id,
+                )
+
+            # ── 通用检查：非纯链接列表 ──
+            link_only = self._is_link_list_only(final_report)
+            if link_only:
+                return VerificationResult(
+                    passed=False, score=20,
+                    detail="最终报告为纯链接列表，未整合为自然语言答案",
+                    suggested_fix="请确保 _finalizer 步骤正确执行了信息整合",
+                    step_id=step_id,
+                )
+
+            # ── 通用检查：最小长度 ──
+            if len(final_report.strip()) < 60:
+                return VerificationResult(
+                    passed=False, score=30,
+                    detail=f"最终报告过短（{len(final_report.strip())} 字符）",
+                    suggested_fix="报告内容不足，请检查是否所有步骤都成功执行",
+                    step_id=step_id,
+                )
+
+            # ── 按 task_type 的结构检查 ──
+            requirements = self._STRUCTURAL_REQUIREMENTS.get(task_type, [])
+            if not requirements:
+                # 无特殊结构要求的类型（recommendation/rewrite/extraction/decision_support）
+                # 只做通用检查即可
+                return VerificationResult(
+                    passed=True, score=80,
+                    detail=f"任务类型 {task_type} 无硬性结构要求，通用检查通过",
+                    step_id=step_id,
+                )
+
+            missing = []
+            missing_labels = []
+            for req in requirements:
+                if req == "|":
+                    # 表格检查：至少有一个 Markdown 表格行
+                    if "|" not in final_report:
+                        missing.append(req)
+                        missing_labels.append("对比表格")
+                elif req not in final_report:
+                    missing.append(req)
+                    missing_labels.append(req)
+
+            if missing:
+                return VerificationResult(
+                    passed=False, score=40,
+                    detail=f"报告缺少必要结构元素: {', '.join(missing_labels)}。"
+                           f"期望结构: {expected_shape[:80]}",
+                    suggested_fix=(
+                        f"最终报告未包含 {'/'.join(missing_labels)} 等关键段落。"
+                        f"请确保 _finalizer 按 {task_type} 类型的标准结构生成答案。"
+                    ),
+                    step_id=step_id,
+                )
+
+            return VerificationResult(
+                passed=True, score=85,
+                detail=f"结构验收通过: 包含全部必要元素 {requirements}",
+                step_id=step_id,
+            )
+
+        except Exception as exc:
+            logger.error("[TaskCompletionVerifier] error: %s", exc)
+            return VerificationResult(
+                passed=False, score=0,
+                detail=f"结构验收出错: {exc}",
+                suggested_fix="请人工检查最终报告",
+                step_id=step_id,
+            )
+
+    @staticmethod
+    def _is_link_list_only(report: str) -> bool:
+        """检查报告是否基本只由 Markdown 链接组成。"""
+        import re
+        # 去掉所有 Markdown 链接
+        no_links = re.sub(r"\[([^\]]*)\]\([^)]*\)", "", report)
+        # 去掉标题和空行
+        cleaned = re.sub(r"^#+\s.*$", "", no_links, flags=re.MULTILINE).strip()
+        cleaned = re.sub(r"\n\s*\n", "\n", cleaned).strip()
+        # 如果清理后几乎没有实质性文字，判定为纯链接列表
+        meaningful = re.sub(r"[\s\-\*>`|#]", "", cleaned)
+        # 阈值 12：约 4-5 个中文汉字，只拦真正全是链接的报告
+        return len(meaningful) < 12
+
+
+# ═══════════════════════════════════════════════════════════════
+# TaskGoalVerifier — 任务目标达成验收（LLM，仅 fact_lookup + comparison）
+# ═══════════════════════════════════════════════════════════════
+
+class TaskGoalVerifier(BaseVerifier):
+    """验收最终答案是否真正完成了任务目标。
+
+    与 TaskCompletionVerifier 的区别：
+      - TCV 检查"结构是否达标"（纯规则，所有 task_type）
+      - TGV 检查"目标是否达成"（LLM，仅 fact_lookup + comparison）
+
+    Phase 3 Step 3: 先只覆盖这两个高频且最容易出现"结构对但答案差"的类型。
+    """
+
+    template_name = "verify_task_goal"
+    # 仅支持这两种类型
+    _SUPPORTED_TYPES: frozenset = frozenset({"fact_lookup", "comparison"})
+
+    @classmethod
+    def supports_type(cls, task_type: str) -> bool:
+        return task_type in cls._SUPPORTED_TYPES
+
+    def _build_prompt(
+        self, step_result: dict, criteria: list[str], context: PipelineContext
+    ) -> str:
+        task_type = str(step_result.get("task_type", ""))
+        final_report = str(step_result.get("final_report", ""))
+        expected_shape = str(step_result.get("expected_output_shape", ""))
+        goal = context.goal if context else str(step_result.get("goal", ""))
+
+        return _prompt_manager.render(
+            self.template_name,
+            goal=goal,
+            task_type=task_type,
+            expected_output_shape=expected_shape,
+            final_report=final_report,
+        )
+
+    def _parse_response(self, response: str) -> VerificationResult:
+        data = self._extract_json(response)
+        if data is None:
+            return VerificationResult(
+                passed=False, score=0,
+                detail="无法解析目标验收结果 — LLM 未返回有效 JSON",
+                suggested_fix="请人工检查最终答案是否达成了目标",
+            )
+
+        overall_passed = bool(data.get("overall_passed", False))
+        score = max(0.0, min(100.0, float(data.get("overall_score", 0))))
+        detail = str(data.get("detail", ""))
+        dim_results = data.get("dimension_results", [])
+
+        # 任何维度失败 → 不通过
+        if dim_results:
+            failed = [d for d in dim_results if not d.get("passed", False)]
+            if failed:
+                overall_passed = False
+
+        return VerificationResult(
+            passed=overall_passed,
+            score=score,
+            detail=detail,
+            suggested_fix=data.get("suggested_fix") if not overall_passed else None,
+        )
+
+
 # ── Verifier 单例 ──
 
 _utility_v_search = UtilityVerifier("search_knowledge")
@@ -495,6 +843,15 @@ _utility_v_list_jobs = UtilityVerifier("list_jobs")
 _utility_v_get_task = UtilityVerifier("get_task")
 _utility_v_public_search = UtilityVerifier("public_search")
 _utility_v_fetch_job = UtilityVerifier("fetch_job_page")
+
+# 第二级 LLM verifier — 仅 info_gathering 路径使用
+_info_gathering_v = InfoGatheringVerifier()
+
+# Level 2 verifier 触发条件映射
+_SECOND_LEVEL_MAP: dict[str, BaseVerifier] = {
+    "public_search": _info_gathering_v,
+    "fetch_job_page": _info_gathering_v,
+}
 
 
 _VERIFIER_MAP = {
@@ -513,7 +870,7 @@ _VERIFIER_MAP = {
 
 
 def get_verifier(tool_name: str) -> BaseVerifier | None:
-    """根据工具名返回对应的 Verifier。未找到时返回 None（跳过验收）。"""
+    """根据工具名返回对应的第一级 Verifier。未找到时返回 None（跳过验收）。"""
     # 精确匹配
     if tool_name in _VERIFIER_MAP:
         return _VERIFIER_MAP[tool_name]
@@ -524,3 +881,22 @@ def get_verifier(tool_name: str) -> BaseVerifier | None:
             return v
     logger.info("get_verifier: no verifier for tool '%s', skipping verification", tool_name)
     return None
+
+
+def get_second_level_verifier(tool_name: str, goal_type: str) -> BaseVerifier | None:
+    """返回第二级 Verifier（LLM 质量把关）。
+
+    仅在以下条件同时满足时返回非 None：
+    - tool_name 在 _SECOND_LEVEL_MAP 中（public_search / fetch_job_page）
+    - goal_type == "info_gathering"
+
+    Args:
+        tool_name: 已解析的工具名
+        goal_type: 当前 task 的 goal_type（来自 TaskState）
+
+    Returns:
+        BaseVerifier 或 None（不触发第二级验收）
+    """
+    if goal_type != "info_gathering":
+        return None
+    return _SECOND_LEVEL_MAP.get(tool_name)

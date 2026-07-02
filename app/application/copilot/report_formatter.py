@@ -1,36 +1,73 @@
-"""统一报告格式化器 — 所有路径的输出都经过这里生成最终报告。
+"""统一报告格式化器 — 按任务类型选择答案模板生成最终报告。
 
-按 artifact_type 选择模板，保证无论从 fixed workflow 还是 orchestrator 路径进来，
-最终用户看到的报告结构一致、可预期。
+职责边界：
+  - 只负责：选模板（get_template）、调用模板渲染、汇总结果
+  - 不负责：渲染逻辑（answer_templates）、结构验收（TaskCompletionVerifier）
+
+Phase 2 Round B: 入口从 artifact_type 路由改为 task_type 路由。
+旧的 _format_* 方法保留为内部 helper，供兼容场景使用。
 """
 
 from typing import Any
 
-from app.tools.output_schema import (
-    ARTIFACT_GENERATED_RESUME,
-    ARTIFACT_INTERVIEW_QUESTIONS,
-    ARTIFACT_ITEM_LIST,
-    ARTIFACT_JOB_RECOMMENDATIONS,
-    ARTIFACT_KNOWLEDGE_SEARCH,
-    ARTIFACT_MATCH_ANALYSIS,
-    ARTIFACT_RESUME_OPTIMIZATION,
-    ARTIFACT_TASK_DETAIL,
-)
 
-
-def format_report(goal: str, tool_outputs: list[dict[str, Any]]) -> str:
-    """生成最终报告。
+def format_report(
+    goal: str,
+    tool_outputs: list[dict[str, Any]],
+    task_type: str = "",
+    expected_output_shape: str = "",
+    context: dict[str, Any] | None = None,
+) -> str:
+    """生成最终报告 — 按 task_type 选择答案模板。
 
     Args:
         goal: 用户原始目标
-        tool_outputs: 标准化后的工具输出列表，每项为 {tool_name, artifact_type, text, content, meta}
+        tool_outputs: 标准化后的工具输出列表（normalize_tool_output 产物）
+        task_type: Phase 2 任务类型（fact_lookup / comparison / ...），为空时回退到 artifact_type 逻辑
+        expected_output_shape: 期望输出结构描述（传入模板供 render 参考）
+        context: 额外上下文（verifier_scores、plan_steps、session_id 等）
 
     Returns:
         格式化的 Markdown 报告
     """
+    # ── Phase 2: 按 task_type 路由到 AnswerTemplate ──
+    if task_type:
+        from app.application.copilot.answer_templates import get_template
+
+        template = get_template(task_type)
+        ctx = context or {}
+        ctx.setdefault("task_type", task_type)
+        ctx.setdefault("goal", goal)
+        ctx.setdefault("expected_output_shape", expected_output_shape)
+
+        # 1. 质量门
+        gate = template.quality_gate(tool_outputs, ctx)
+        if not gate.passed:
+            # 质量门不通过 → 返回 fallback（结构化失败说明，非原始链接堆砌）
+            return gate.fallback_message or template.fallback_reason(tool_outputs, ctx)
+
+        # 2. 渲染
+        return template.render(goal, tool_outputs, ctx)
+
+    # ── 兼容路径：无 task_type 时回退到旧 artifact_type 逻辑 ──
+    return _format_by_artifact_type(goal, tool_outputs)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 兼容路径：无 task_type 时按 artifact_type 渲染
+# ═══════════════════════════════════════════════════════════════
+
+def _format_by_artifact_type(goal: str, tool_outputs: list[dict[str, Any]]) -> str:
+    """旧逻辑：按 artifact_type 分组渲染。Phase 2 兼容兜底。"""
+    from app.tools.output_schema import (
+        ARTIFACT_GENERATED_RESUME, ARTIFACT_INTERVIEW_QUESTIONS,
+        ARTIFACT_ITEM_LIST, ARTIFACT_JOB_RECOMMENDATIONS,
+        ARTIFACT_KNOWLEDGE_SEARCH, ARTIFACT_MATCH_ANALYSIS,
+        ARTIFACT_RESUME_OPTIMIZATION,
+    )
+
     lines = [f"# {goal}", ""]
 
-    # 分组：同类型只取最有价值的
     match_outputs = [o for o in tool_outputs if o.get("artifact_type") == ARTIFACT_MATCH_ANALYSIS]
     optimize_outputs = [o for o in tool_outputs if o.get("artifact_type") == ARTIFACT_RESUME_OPTIMIZATION]
     interview_outputs = [o for o in tool_outputs if o.get("artifact_type") == ARTIFACT_INTERVIEW_QUESTIONS]
@@ -39,31 +76,23 @@ def format_report(goal: str, tool_outputs: list[dict[str, Any]]) -> str:
     recommend_outputs = [o for o in tool_outputs if o.get("artifact_type") == ARTIFACT_JOB_RECOMMENDATIONS]
     resume_outputs = [o for o in tool_outputs if o.get("artifact_type") == ARTIFACT_GENERATED_RESUME]
 
-    # 对比模式：多份 match_analysis
     if len(match_outputs) >= 2:
         lines.extend(_format_comparison(match_outputs))
     elif len(match_outputs) == 1:
         lines.extend(_format_match(match_outputs[0]))
-
     if optimize_outputs:
         lines.extend(_format_optimize(optimize_outputs[0]))
-
     if interview_outputs:
         lines.extend(_format_interview(interview_outputs[0]))
-
     if search_outputs:
         lines.extend(_format_search(search_outputs[0]))
-
     if recommend_outputs:
         lines.extend(_format_recommend(recommend_outputs[0]))
-
     if resume_outputs:
         lines.extend(_format_resume(resume_outputs[0]))
-
     if list_outputs:
         lines.extend(_format_list(list_outputs[0]))
 
-    # 如果没有任何识别的产出物，兜底输出
     if len(lines) <= 2:
         for out in tool_outputs:
             text = out.get("text", "")
@@ -71,11 +100,15 @@ def format_report(goal: str, tool_outputs: list[dict[str, Any]]) -> str:
                 lines.append("")
                 lines.append(text)
 
-    return "\n".join(lines)
+    report = "\n".join(lines)
+    if len(report.strip()) < 60:
+        return f"# {goal}\n\n未能生成有效报告。建议补充更多信息（如指定具体公司、岗位或技术方向）后重试。"
+
+    return report
 
 
 # ═══════════════════════════════════════════════════════════════
-# 各类型格式化方法
+# 各类型格式化方法（内部 helper，供兼容和模板内部使用）
 # ═══════════════════════════════════════════════════════════════
 
 def _format_match(output: dict) -> list[str]:
@@ -168,7 +201,11 @@ def _format_interview(output: dict) -> list[str]:
 
 
 def _format_search(output: dict) -> list[str]:
-    """搜索结果 → 干净的列表，去掉版权噪音。"""
+    """搜索结果 → 干净的列表，去掉版权噪音。
+
+    Phase 1 质量门：如果 verifier_score < 50，不渲染链接列表，
+    改为提示用户更换搜索词。
+    """
     lines = ["## 搜索结果", ""]
 
     content = output.get("content", {})
@@ -176,6 +213,18 @@ def _format_search(output: dict) -> list[str]:
 
     if not items:
         lines.append("未找到相关结果。")
+        return lines
+
+    # ── 质量门：verifier 评分 < 50 时拒止渲染链接列表 ──
+    verifier_score = output.get("meta", {}).get("verifier_score")
+    if verifier_score is not None and verifier_score < 50:
+        query = content.get("query", output.get("meta", {}).get("query", ""))
+        lines.append("搜索结果与您的问题关联度较低。建议：")
+        lines.append("")
+        lines.append("- 使用**更具体的关键词**重新搜索（如加上公司名、岗位名、技术栈）")
+        if query:
+            lines.append(f"- 尝试更换搜索词（当前搜索词：`{query}`）")
+        lines.append("- 缩小搜索范围：指定具体公司、岗位或技术领域")
         return lines
 
     lines.append(f"共找到 **{len(items)}** 条相关信息：")
